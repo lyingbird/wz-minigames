@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<title>廉颇·正义蹦蹦</title>
+<link rel="stylesheet" href="../../shared/styles.css">
+<style>
+:root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action:none;user-select:none;-webkit-user-select:none}
+#game{width:100%;height:100%;position:fixed;inset:0}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<script type="module">
+import{createCanvas,createGameLoop,createParticleSystem,createFloatingText,drawRoundRect,formatScore,COLORS}from'../../shared/engine.js';
+import{loadHeroList,preloadAvatars,getAvatarImage,GAME_HEROES}from'../../shared/heroes.js';
+import{initAudio}from'../../shared/audio.js';
+import{addScore,getPersonalBest}from'../../shared/leaderboard.js';
+import{getCurrentSeason}from'../../shared/season.js';
+
+// ═══════════════════════════════════════════════════════════
+// Constants
+// ═══════════════════════════════════════════════════════════
+const GAME_ID = 'jump';
+const HERO_ID = GAME_HEROES.LIANPO; // 105
+
+// Isometric projection
+const ISO_X = 0.75;   // x-component horizontal
+const ISO_Y = 0.375;  // x-component vertical (approx 30deg)
+
+// Charging
+const CHARGE_RATE = 1.0;     // power per second
+const MAX_CHARGE = 2.5;      // max seconds of charge
+const BASE_DISTANCE = 120;   // base distance at power=1
+const MAX_DISTANCE = 320;    // distance at max power
+
+// Jump
+const JUMP_DURATION = 0.45;  // seconds for the arc
+const ARC_HEIGHT_FACTOR = 0.6;
+
+// Platform
+const PLAT_MIN_GAP = 90;
+const PLAT_MAX_GAP = 180;
+const PLAT_TYPES = ['tower','barracks','buff','jungle','crystal'];
+const PLAT_COLORS = {
+  tower:    { top: '#5B7DB1', side: '#3A5280', front: '#2E4268', label: '防御塔' },
+  barracks: { top: '#6B8E6B', side: '#4A6B4A', front: '#3A5A3A', label: '兵营' },
+  buff:     { top: '#C0392B', side: '#962D22', front: '#7B241C', label: 'BUFF' },
+  jungle:   { top: '#8B7355', side: '#6B5642', front: '#554433', label: '野怪石台' },
+  crystal:  { top: '#A77BCA', side: '#7D5A9B', front: '#5E3F7A', label: '水晶' },
+};
+const PLAT_SIZES = {
+  tower: { w: 70, d: 70, h: 50 },
+  barracks: { w: 100, d: 100, h: 35 },
+  buff: { w: 50, d: 50, h: 55 },
+  jungle: { w: 75, d: 75, h: 45 },
+  crystal: { w: 65, d: 65, h: 65 },
+};
+
+// ═══════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════
+const screen = createCanvas(document.getElementById('game'));
+const { canvas, ctx, width: W } = screen;
+let H = screen.height;
+
+const particles = createParticleSystem(300);
+const floatingText = createFloatingText();
+let audio = null;
+
+// Game state
+let state = 'loading'; // loading, title, playing, jumping, falling, gameover
+let score = 0;
+let combo = 0;          // consecutive perfect landings
+let bestScore = 0;
+let jumpCount = 0;
+
+// Platforms
+let platforms = [];
+let currentPlatIdx = 0;
+
+// Camera (world offset)
+let camX = 0, camY = 0;
+let camTargetX = 0, camTargetY = 0;
+
+// Lian Po
+let lpX = 0, lpY = 0, lpZ = 0;       // world position
+let lpScaleY = 1;                       // squish factor
+let lpRotation = 0;                     // somersault during jump
+
+// Charging
+let charging = false;
+let chargeTime = 0;
+let chargePower = 0;
+
+// Jump animation
+let jumping = false;
+let jumpT = 0;
+let jumpStartX = 0, jumpStartY = 0, jumpStartZ = 0;
+let jumpTargetX = 0, jumpTargetY = 0;
+let jumpArcHeight = 0;
+let jumpDir = 1; // 1 = right, -1 = left
+
+// Falling animation
+let falling = false;
+let fallT = 0;
+let fallStartZ = 0;
+
+// Screen shake
+let shakeX = 0, shakeY = 0;
+let shakeMag = 0, shakeDecay = 0;
+
+// Title animation
+let titlePulse = 0;
+
+// ═══════════════════════════════════════════════════════════
+// Isometric Projection
+// ═══════════════════════════════════════════════════════════
+function toScreen(wx, wy, wz) {
+  const sx = (wx - wy) * ISO_X;
+  const sy = (wx + wy) * ISO_Y - wz;
+  return { x: sx - camX + W / 2, y: sy - camY + H / 2 + 60 };
+}
+
+// ═══════════════════════════════════════════════════════════
+// Platform Generation
+// ═══════════════════════════════════════════════════════════
+function createPlatform(wx, wy, type) {
+  const size = PLAT_SIZES[type];
+  return {
+    wx, wy, wz: 0,
+    w: size.w, d: size.d, h: size.h,
+    type,
+    landed: false,
+    landAnim: 0,
+    glowAnim: 0,
+  };
+}
+
+function pickNextType(idx) {
+  if ((idx + 1) % 10 === 0) return 'crystal';
+  const r = Math.random();
+  if (r < 0.35) return 'tower';
+  if (r < 0.55) return 'barracks';
+  if (r < 0.70) return 'buff';
+  return 'jungle';
+}
+
+function generateNextPlatform() {
+  const last = platforms[platforms.length - 1];
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  const difficulty = Math.min(jumpCount / 30, 1);
+  const gap = PLAT_MIN_GAP + Math.random() * (PLAT_MAX_GAP - PLAT_MIN_GAP) * (0.7 + difficulty * 0.3);
+
+  let nx, ny;
+  if (dir === 1) {
+    // Right: increase X
+    nx = last.wx + gap;
+    ny = last.wy;
+  } else {
+    // Left: increase Y
+    nx = last.wx;
+    ny = last.wy + gap;
+  }
+
+  const type = pickNextType(platforms.length);
+  const plat = createPlatform(nx, ny, type);
+  plat._dir = dir; // direction from previous to this
+  platforms.push(plat);
+}
+
+function initPlatforms() {
+  platforms = [];
+  const first = createPlatform(0, 0, 'tower');
+  first.landed = true;
+  platforms.push(first);
+  generateNextPlatform();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Camera
+// ═══════════════════════════════════════════════════════════
+function centerCameraOnPlatform(p) {
+  const s = toScreenRaw(p.wx, p.wy, p.h);
+  camTargetX = s.x;
+  camTargetY = s.y;
+}
+
+function toScreenRaw(wx, wy, wz) {
+  return {
+    x: (wx - wy) * ISO_X,
+    y: (wx + wy) * ISO_Y - wz,
+  };
+}
+
+function updateCamera(dt) {
+  const speed = 8;
+  camX += (camTargetX - camX) * Math.min(1, speed * dt);
+  camY += (camTargetY - camY) * Math.min(1, speed * dt);
+}
+
+// ═══════════════════════════════════════════════════════════
+// Drawing: Platform (Isometric Box)
+// ═══════════════════════════════════════════════════════════
+function drawPlatform(p, isCurrent, isNext) {
+  const hw = p.w / 2;
+  const hd = p.d / 2;
+  const baseH = p.h + (p.landAnim || 0);
+  const colors = PLAT_COLORS[p.type];
+
+  // 4 corners of top face
+  const tl = toScreen(p.wx - hw, p.wy - hd, baseH);
+  const tr = toScreen(p.wx + hw, p.wy - hd, baseH);
+  const br = toScreen(p.wx + hw, p.wy + hd, baseH);
+  const bl = toScreen(p.wx - hw, p.wy + hd, baseH);
+
+  // Bottom corners (front two only for visible side faces)
+  const br0 = toScreen(p.wx + hw, p.wy + hd, 0);
+  const bl0 = toScreen(p.wx - hw, p.wy + hd, 0);
+  const tr0 = toScreen(p.wx + hw, p.wy - hd, 0);
+
+  ctx.save();
+
+  // Right side face
+  ctx.beginPath();
+  ctx.moveTo(br.x, br.y);
+  ctx.lineTo(tr.x, tr.y);
+  ctx.lineTo(tr0.x, tr0.y);
+  ctx.lineTo(br0.x, br0.y);
+  ctx.closePath();
+  ctx.fillStyle = colors.side;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Front face
+  ctx.beginPath();
+  ctx.moveTo(bl.x, bl.y);
+  ctx.lineTo(br.x, br.y);
+  ctx.lineTo(br0.x, br0.y);
+  ctx.lineTo(bl0.x, bl0.y);
+  ctx.closePath();
+  ctx.fillStyle = colors.front;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Top face
+  ctx.beginPath();
+  ctx.moveTo(tl.x, tl.y);
+  ctx.lineTo(tr.x, tr.y);
+  ctx.lineTo(br.x, br.y);
+  ctx.lineTo(bl.x, bl.y);
+  ctx.closePath();
+  ctx.fillStyle = colors.top;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Center dot (perfect landing zone indicator)
+  if (isNext || isCurrent) {
+    const center = toScreen(p.wx, p.wy, baseH);
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fill();
+  }
+
+  // Glow effect for current platform
+  if (isCurrent && !jumping && !falling) {
+    p.glowAnim += 0.03;
+    const glowAlpha = 0.15 + Math.sin(p.glowAnim) * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(tl.x, tl.y);
+    ctx.lineTo(tr.x, tr.y);
+    ctx.lineTo(br.x, br.y);
+    ctx.lineTo(bl.x, bl.y);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(212,168,75,${glowAlpha})`;
+    ctx.fill();
+  }
+
+  // Crystal special glow
+  if (p.type === 'crystal') {
+    const center = toScreen(p.wx, p.wy, baseH);
+    const gRad = Math.max(p.w, p.d) * 0.4;
+    const grad = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, gRad);
+    grad.addColorStop(0, 'rgba(200,150,255,0.3)');
+    grad.addColorStop(1, 'rgba(200,150,255,0)');
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, gRad, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Drawing: Lian Po
+// ═══════════════════════════════════════════════════════════
+function drawLianPo() {
+  const pos = toScreen(lpX, lpY, lpZ);
+  const avatarImg = getAvatarImage(HERO_ID);
+
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+
+  if (jumping) {
+    ctx.rotate(lpRotation);
+  }
+
+  // Shadow drawn separately via drawShadow()
+
+  const bodyW = 30;
+  const bodyH = 36 * lpScaleY;
+  const headR = 16;
+
+  // Body (stocky round rectangle)
+  ctx.fillStyle = '#4A6B8A';
+  drawRoundRect(ctx, -bodyW / 2, -bodyH - headR * 0.3, bodyW, bodyH, 8);
+  ctx.fill();
+  ctx.strokeStyle = '#2C3E50';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Armor stripe
+  ctx.fillStyle = '#D4A84B';
+  ctx.fillRect(-bodyW / 2 + 4, -bodyH - headR * 0.3 + bodyH * 0.3, bodyW - 8, 4);
+
+  // Head circle with avatar
+  if (avatarImg) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, -bodyH - headR * 0.3 - headR + 2, headR, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(avatarImg,
+      -headR, -bodyH - headR * 0.3 - headR * 2 + 2,
+      headR * 2, headR * 2);
+    ctx.restore();
+    // Border
+    ctx.beginPath();
+    ctx.arc(0, -bodyH - headR * 0.3 - headR + 2, headR, 0, Math.PI * 2);
+    ctx.strokeStyle = '#D4A84B';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  } else {
+    // Fallback: colored circle
+    ctx.beginPath();
+    ctx.arc(0, -bodyH - headR * 0.3 - headR + 2, headR, 0, Math.PI * 2);
+    ctx.fillStyle = '#D4A84B';
+    ctx.fill();
+    ctx.strokeStyle = '#B8860B';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Feet
+  ctx.fillStyle = '#2C3E50';
+  ctx.fillRect(-10, -2, 8, 4);
+  ctx.fillRect(2, -2, 8, 4);
+
+  ctx.restore();
+}
+
+function drawShadow() {
+  if (state !== 'playing' && state !== 'jumping') return;
+  // Project shadow onto whichever platform is below
+  const curPlat = platforms[currentPlatIdx];
+  const nextPlat = platforms[currentPlatIdx + 1];
+  // Use next platform height if jumping toward it, else current
+  const refPlat = (jumping && nextPlat) ? nextPlat : curPlat;
+  if (!refPlat) return;
+  const platH = refPlat.h;
+  const shadowPos = toScreen(lpX, lpY, platH);
+
+  const heightAbove = Math.max(0, lpZ - platH);
+  const shadowScale = Math.max(0.3, 1 - heightAbove / 300);
+  const shadowAlpha = Math.max(0.1, 0.4 * shadowScale);
+
+  ctx.save();
+  ctx.globalAlpha = shadowAlpha;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.beginPath();
+  ctx.ellipse(shadowPos.x, shadowPos.y + 2, 14 * shadowScale, 6 * shadowScale, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Drawing: Power Bar
+// ═══════════════════════════════════════════════════════════
+function drawPowerBar() {
+  if (!charging) return;
+
+  const pos = toScreen(lpX, lpY, lpZ);
+  const barW = 40;
+  const barH = 6;
+  const bx = pos.x - barW / 2;
+  const by = pos.y - 70;
+  const fill = chargePower / MAX_CHARGE;
+
+  ctx.save();
+  // Background
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  drawRoundRect(ctx, bx - 2, by - 2, barW + 4, barH + 4, 4);
+  ctx.fill();
+  // Fill
+  const fillColor = fill < 0.5 ? '#4CAF50' : fill < 0.8 ? '#D4A84B' : '#E74C3C';
+  ctx.fillStyle = fillColor;
+  drawRoundRect(ctx, bx, by, barW * fill, barH, 3);
+  ctx.fill();
+  // Border
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 1;
+  drawRoundRect(ctx, bx, by, barW, barH, 3);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Drawing: HUD
+// ═══════════════════════════════════════════════════════════
+function drawHUD() {
+  const st = screen.safeTop + 10;
+  ctx.save();
+
+  // Score
+  ctx.font = 'bold 48px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.strokeText(score, W / 2, st);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(score, W / 2, st);
+
+  // Combo
+  if (combo >= 2) {
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillStyle = COLORS.GOLD;
+    ctx.fillText(`${combo}x COMBO`, W / 2, st + 54);
+  }
+
+  // Back button
+  ctx.font = '16px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillText('< 返回', 16, st);
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Drawing: Background
+// ═══════════════════════════════════════════════════════════
+function drawBackground() {
+  const season = getCurrentSeason();
+  const cs = season.colorScheme;
+
+  // Gradient sky
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, cs.secondary || '#0B1929');
+  grad.addColorStop(0.5, '#151535');
+  grad.addColorStop(1, '#1A1A2E');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle grid for depth
+  ctx.save();
+  ctx.globalAlpha = 0.04;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 0.5;
+  const gridStep = 60;
+  const ox = (camX * 0.3) % gridStep;
+  const oy = (camY * 0.3) % gridStep;
+  for (let x = -gridStep + ox; x < W + gridStep; x += gridStep) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+  for (let y = -gridStep + oy; y < H + gridStep; y += gridStep) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Screen Shake
+// ═══════════════════════════════════════════════════════════
+function triggerShake(magnitude, decay) {
+  shakeMag = magnitude;
+  shakeDecay = decay || 15;
+}
+
+function updateShake(dt) {
+  if (shakeMag > 0.1) {
+    shakeX = (Math.random() - 0.5) * shakeMag * 2;
+    shakeY = (Math.random() - 0.5) * shakeMag * 2;
+    shakeMag *= Math.pow(0.001, dt / (1 / shakeDecay));
+  } else {
+    shakeX = 0;
+    shakeY = 0;
+    shakeMag = 0;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Landing Logic
+// ═══════════════════════════════════════════════════════════
+function checkLanding() {
+  const nextPlat = platforms[currentPlatIdx + 1];
+  if (!nextPlat) return 'miss';
+
+  const dx = lpX - nextPlat.wx;
+  const dy = lpY - nextPlat.wy;
+  const hw = nextPlat.w / 2;
+  const hd = nextPlat.d / 2;
+
+  if (Math.abs(dx) <= hw && Math.abs(dy) <= hd) {
+    // On platform!
+    const centerDist = Math.sqrt((dx / hw) ** 2 + (dy / hd) ** 2);
+    if (centerDist <= 0.2) return 'perfect';
+    if (centerDist <= 0.9) return 'normal';
+    return 'edge';
+  }
+  return 'miss';
+}
+
+function handleLanding(result) {
+  const nextPlat = platforms[currentPlatIdx + 1];
+
+  if (result === 'miss') {
+    // Fall!
+    state = 'falling';
+    falling = true;
+    fallT = 0;
+    fallStartZ = lpZ;
+    if (audio) audio.playDeath();
+    return;
+  }
+
+  // Landed!
+  currentPlatIdx++;
+  jumpCount++;
+  nextPlat.landed = true;
+
+  // Snap position
+  lpZ = nextPlat.h;
+
+  // Score calculation
+  let points = 1;
+  let isPerfect = result === 'perfect';
+
+  if (isPerfect) {
+    combo++;
+    points = Math.min(combo * 2, 30);
+    if (nextPlat.type === 'buff') points *= 3;
+  } else {
+    combo = 0;
+  }
+
+  if (nextPlat.type === 'crystal') {
+    points += 5;
+  }
+
+  score += points;
+
+  // Effects
+  const landPos = toScreen(nextPlat.wx, nextPlat.wy, nextPlat.h);
+
+  if (isPerfect) {
+    // Perfect landing effects
+    particles.emit(landPos.x, landPos.y, {
+      count: 20, speed: 120, life: 0.8, color: COLORS.GOLD, size: 4, gravity: 100
+    });
+    floatingText.add(landPos.x, landPos.y - 40, `PERFECT +${points}`, {
+      color: COLORS.GOLD, size: 22, duration: 1.2
+    });
+    triggerShake(6, 20);
+    if (audio) {
+      audio.playScore();
+      if (combo >= 2) audio.playCombo(Math.min(combo, 8));
+    }
+  } else if (result === 'edge') {
+    // Edge landing - wobbly
+    particles.emit(landPos.x, landPos.y, {
+      count: 5, speed: 50, life: 0.4, color: '#aaa', size: 3, gravity: 80
+    });
+    floatingText.add(landPos.x, landPos.y - 30, `+${points}`, {
+      color: '#ccc', size: 16, duration: 0.8
+    });
+    triggerShake(2, 15);
+    if (audio) audio.playHit();
+  } else {
+    // Normal landing
+    particles.emit(landPos.x, landPos.y, {
+      count: 10, speed: 80, life: 0.6, color: '#B0C4DE', size: 3, gravity: 100
+    });
+    floatingText.add(landPos.x, landPos.y - 35, `+${points}`, {
+      color: '#fff', size: 18, duration: 1
+    });
+    triggerShake(4, 18);
+    if (audio) audio.playHit();
+  }
+
+  // Platform compress animation on land
+  nextPlat.landAnim = -8;
+
+  // Center camera
+  centerCameraOnPlatform(nextPlat);
+
+  // Generate next platform
+  generateNextPlatform();
+
+  // Clean old platforms (keep last 5)
+  while (currentPlatIdx > 4) {
+    platforms.shift();
+    currentPlatIdx--;
+  }
+
+  // Reset character state — snap Lian Po to platform center for clean next jump
+  jumping = false;
+  lpX = nextPlat.wx;
+  lpY = nextPlat.wy;
+  lpRotation = 0;
+  lpScaleY = 1;
+  state = 'playing';
+}
+
+// ═══════════════════════════════════════════════════════════
+// Jump Execution
+// ═══════════════════════════════════════════════════════════
+function executeJump() {
+  if (chargePower < 0.05) {
+    charging = false;
+    chargeTime = 0;
+    chargePower = 0;
+    lpScaleY = 1;
+    return;
+  }
+
+  const nextPlat = platforms[currentPlatIdx + 1];
+  if (!nextPlat) return;
+
+  // Direction to next platform
+  const dxWorld = nextPlat.wx - lpX;
+  const dyWorld = nextPlat.wy - lpY;
+  const dirAngle = Math.atan2(dyWorld, dxWorld);
+
+  // Jump distance based on charge
+  const distance = BASE_DISTANCE + (MAX_DISTANCE - BASE_DISTANCE) * (chargePower / MAX_CHARGE);
+
+  jumpStartX = lpX;
+  jumpStartY = lpY;
+  jumpStartZ = lpZ;
+  jumpTargetX = lpX + Math.cos(dirAngle) * distance;
+  jumpTargetY = lpY + Math.sin(dirAngle) * distance;
+  jumpArcHeight = distance * ARC_HEIGHT_FACTOR;
+
+  jumping = true;
+  jumpT = 0;
+  state = 'jumping';
+  charging = false;
+  chargeTime = 0;
+  chargePower = 0;
+
+  if (audio) audio.playStart();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Input Handling
+// ═══════════════════════════════════════════════════════════
+function handlePointerDown(x, y) {
+  if (state === 'title') {
+    // Check back button
+    if (x < 80 && y < screen.safeTop + 40) {
+      goToLobby();
+      return;
+    }
+    startGame();
+    return;
+  }
+
+  if (state === 'gameover') {
+    // Replay button: drawn at cy+65, height 44, width 180
+    const cy = H / 2;
+    const btnY = cy + 65;
+    const btnH = 44;
+    if (y >= btnY && y <= btnY + btnH && x > W / 2 - 90 && x < W / 2 + 90) {
+      startGame();
+      return;
+    }
+    // Back to lobby: drawn at btnY + btnH + 20 area
+    if (y >= btnY + btnH + 10 && y <= btnY + btnH + 45 && x > W / 2 - 60 && x < W / 2 + 60) {
+      goToLobby();
+      return;
+    }
+    return;
+  }
+
+  if (state === 'playing') {
+    // Check back button
+    if (x < 80 && y < screen.safeTop + 40) {
+      goToLobby();
+      return;
+    }
+    // Start charging
+    charging = true;
+    chargeTime = 0;
+    chargePower = 0;
+    state = 'playing'; // keep as playing, charge updates in update()
+  }
+}
+
+function handlePointerUp(x, y) {
+  if (charging && state === 'playing') {
+    executeJump();
+  }
+}
+
+// Mouse support
+canvas.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  ensureAudio();
+  const rect = canvas.getBoundingClientRect();
+  const scale = rect.width / W;
+  handlePointerDown(
+    (e.clientX - rect.left) / scale,
+    (e.clientY - rect.top) / scale
+  );
+});
+canvas.addEventListener('mouseup', (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const scale = rect.width / W;
+  handlePointerUp(
+    (e.clientX - rect.left) / scale,
+    (e.clientY - rect.top) / scale
+  );
+});
+
+// Touch support
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  ensureAudio();
+  const t = e.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const scale = rect.width / W;
+  handlePointerDown(
+    (t.clientX - rect.left) / scale,
+    (t.clientY - rect.top) / scale
+  );
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const rect = canvas.getBoundingClientRect();
+  const scale = rect.width / W;
+  handlePointerUp(
+    (t.clientX - rect.left) / scale,
+    (t.clientY - rect.top) / scale
+  );
+}, { passive: false });
+
+// Prevent context menu
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ═══════════════════════════════════════════════════════════
+// Game Flow
+// ═══════════════════════════════════════════════════════════
+function ensureAudio() {
+  if (!audio) {
+    audio = initAudio();
+  }
+}
+
+function goToLobby() {
+  if (audio) audio.stopBGM(0.5);
+  window.location.href = '../../';
+}
+
+function startGame() {
+  score = 0;
+  combo = 0;
+  jumpCount = 0;
+  jumping = false;
+  falling = false;
+  charging = false;
+  chargeTime = 0;
+  chargePower = 0;
+  lpRotation = 0;
+  lpScaleY = 1;
+  shakeMag = 0;
+
+  initPlatforms();
+  const first = platforms[0];
+  lpX = first.wx;
+  lpY = first.wy;
+  lpZ = first.h;
+
+  centerCameraOnPlatform(first);
+  camX = camTargetX;
+  camY = camTargetY;
+
+  state = 'playing';
+  particles.clear();
+
+  if (audio) {
+    audio.playBGM('hook');
+    audio.playStart();
+  }
+}
+
+function gameOver() {
+  state = 'gameover';
+  if (audio) {
+    audio.stopBGM(1);
+  }
+
+  // Save score
+  const pb = getPersonalBest(GAME_ID);
+  const isNew = !pb || score > pb.score;
+  if (score > 0) {
+    addScore(GAME_ID, score, HERO_ID, '廉颇');
+  }
+  if (isNew && score > 0 && audio) {
+    audio.playNewRecord();
+  }
+  bestScore = getPersonalBest(GAME_ID)?.score || 0;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Title Screen
+// ═══════════════════════════════════════════════════════════
+function drawTitle() {
+  drawBackground();
+
+  const breathe = Math.sin(titlePulse) * 0.03 + 1;
+
+  ctx.save();
+
+  // Title
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = `bold ${Math.round(36 * breathe)}px sans-serif`;
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = '#000';
+  ctx.strokeText('廉颇·正义蹦蹦', W / 2, H * 0.22);
+  ctx.fillStyle = COLORS.GOLD;
+  ctx.fillText('廉颇·正义蹦蹦', W / 2, H * 0.22);
+
+  // Subtitle
+  ctx.font = '14px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText('王者荣耀 · 小游戏合集', W / 2, H * 0.22 + 32);
+
+  // Avatar
+  const avatarImg = getAvatarImage(HERO_ID);
+  if (avatarImg) {
+    const ax = W / 2, ay = H * 0.42;
+    const ar = 45;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(ax, ay, ar, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(avatarImg, ax - ar, ay - ar, ar * 2, ar * 2);
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(ax, ay, ar, 0, Math.PI * 2);
+    ctx.strokeStyle = COLORS.GOLD;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Glow ring
+    ctx.beginPath();
+    ctx.arc(ax, ay, ar + 5, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(212,168,75,${0.3 + Math.sin(titlePulse * 2) * 0.15})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Hero name
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('廉颇', W / 2, H * 0.42 + 60);
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText('正义爆轰 · 坦克', W / 2, H * 0.42 + 82);
+
+  // Personal best
+  ctx.font = '16px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.fillText(`最高分: ${bestScore}`, W / 2, H * 0.62);
+
+  // How to play
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillText('长按蓄力 · 松手跳跃 · 精准落地', W / 2, H * 0.70);
+
+  // Start hint
+  const hintAlpha = 0.5 + Math.sin(titlePulse * 3) * 0.3;
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillStyle = `rgba(212,168,75,${hintAlpha})`;
+  ctx.fillText('点击任意位置开始', W / 2, H * 0.80);
+
+  // Season
+  const season = getCurrentSeason();
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.fillText(`赛季: ${season.name}`, W / 2, H * 0.88);
+
+  // Back button
+  ctx.textAlign = 'left';
+  ctx.font = '16px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillText('< 返回', 16, screen.safeTop + 10);
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Game Over Screen
+// ═══════════════════════════════════════════════════════════
+function drawGameOver() {
+  // Draw game scene underneath (frozen)
+  drawBackground();
+  drawScene();
+
+  // Overlay
+  ctx.save();
+  ctx.globalAlpha = 0.75;
+  ctx.fillStyle = '#1A1A2E';
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+
+  const cy = H / 2;
+
+  // Title
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 32px sans-serif';
+  ctx.fillStyle = COLORS.GOLD;
+  ctx.fillText('游戏结束', W / 2, cy - 80);
+
+  // Score
+  ctx.font = 'bold 56px sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(formatScore(score), W / 2, cy - 20);
+
+  // Best
+  const pb = getPersonalBest(GAME_ID);
+  const isNewRecord = pb && score >= pb.score && score > 0;
+  ctx.font = '16px sans-serif';
+  ctx.fillStyle = isNewRecord ? COLORS.GOLD : 'rgba(255,255,255,0.6)';
+  ctx.fillText(
+    isNewRecord ? `新纪录! 最高分: ${formatScore(bestScore)}` : `最高分: ${formatScore(bestScore)}`,
+    W / 2, cy + 20
+  );
+
+  // Jump count
+  ctx.font = '14px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillText(`跳跃次数: ${jumpCount}`, W / 2, cy + 45);
+
+  // Replay button
+  const btnW = 180, btnH = 44;
+  const btnX = W / 2 - btnW / 2, btnY = cy + 65;
+  ctx.fillStyle = COLORS.GOLD;
+  drawRoundRect(ctx, btnX, btnY, btnW, btnH, 22);
+  ctx.fill();
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillStyle = COLORS.DARK;
+  ctx.fillText('再来一局', W / 2, btnY + btnH / 2);
+
+  // Back to lobby
+  ctx.font = '15px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.fillText('返回大厅', W / 2, btnY + btnH + 30);
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Scene Drawing (platforms + character)
+// ═══════════════════════════════════════════════════════════
+function drawScene() {
+  // Draw platforms from back to front (sort by wx+wy for painter's algo)
+  const sorted = platforms
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => (a.p.wx + a.p.wy) - (b.p.wx + b.p.wy));
+
+  for (const { p, i } of sorted) {
+    const isCurrent = i === currentPlatIdx;
+    const isNext = i === currentPlatIdx + 1;
+    drawPlatform(p, isCurrent, isNext);
+  }
+
+  // Shadow
+  drawShadow();
+
+  // Lian Po (draw after platforms for correct layering)
+  if (state !== 'gameover') {
+    drawLianPo();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Update
+// ═══════════════════════════════════════════════════════════
+function update(dt) {
+  H = screen.height;
+
+  if (state === 'title') {
+    titlePulse += dt * 3; // smooth animation speed
+    return;
+  }
+
+  if (state === 'gameover') {
+    particles.update(dt);
+    floatingText.update(dt);
+    return;
+  }
+
+  // Charging
+  if (charging && state === 'playing') {
+    chargeTime += dt;
+    chargePower = Math.min(chargeTime * CHARGE_RATE, MAX_CHARGE);
+
+    // Squish effect
+    lpScaleY = 1 - 0.3 * (chargePower / MAX_CHARGE);
+
+    // Shake at high charge
+    if (chargePower > MAX_CHARGE * 0.7) {
+      const intensity = (chargePower - MAX_CHARGE * 0.7) / (MAX_CHARGE * 0.3);
+      shakeMag = Math.max(shakeMag, intensity * 3);
+    }
+
+    // Platform compress
+    const curPlat = platforms[currentPlatIdx];
+    if (curPlat) {
+      curPlat.landAnim = -5 * (chargePower / MAX_CHARGE);
+    }
+  }
+
+  // Jump animation
+  if (state === 'jumping' && jumping) {
+    jumpT += dt / JUMP_DURATION;
+
+    if (jumpT >= 1) {
+      jumpT = 1;
+      lpX = jumpTargetX;
+      lpY = jumpTargetY;
+
+      // Check landing
+      const result = checkLanding();
+      handleLanding(result);
+    } else {
+      // Interpolate position
+      lpX = jumpStartX + (jumpTargetX - jumpStartX) * jumpT;
+      lpY = jumpStartY + (jumpTargetY - jumpStartY) * jumpT;
+
+      // Parabolic arc
+      const arcT = jumpT;
+      lpZ = jumpStartZ + jumpArcHeight * 4 * arcT * (1 - arcT);
+
+      // Somersault rotation
+      lpRotation = jumpT * Math.PI * 2;
+
+      // Trail particles
+      if (Math.random() < 0.4) {
+        const pos = toScreen(lpX, lpY, lpZ);
+        particles.emit(pos.x, pos.y, {
+          count: 1, speed: 20, life: 0.3,
+          color: 'rgba(212,168,75,0.6)', size: 2, gravity: 30
+        });
+      }
+    }
+  }
+
+  // Falling animation
+  if (state === 'falling' && falling) {
+    fallT += dt;
+    lpZ = fallStartZ - fallT * fallT * 800; // accelerating fall
+
+    if (fallT > 1.2) {
+      falling = false;
+      gameOver();
+    }
+
+    // Shrink while falling
+    lpScaleY = Math.max(0.3, 1 - fallT * 0.5);
+    lpRotation += dt * 8;
+  }
+
+  // Platform land animation recovery
+  for (const p of platforms) {
+    if (p.landAnim !== 0 && !charging) {
+      p.landAnim *= 0.85;
+      if (Math.abs(p.landAnim) < 0.2) p.landAnim = 0;
+    }
+  }
+
+  updateCamera(dt);
+  updateShake(dt);
+  particles.update(dt);
+  floatingText.update(dt);
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render
+// ═══════════════════════════════════════════════════════════
+function render() {
+  ctx.save();
+
+  // Apply screen shake
+  if (shakeMag > 0.1) {
+    ctx.translate(shakeX, shakeY);
+  }
+
+  if (state === 'title') {
+    drawTitle();
+  } else if (state === 'gameover') {
+    drawGameOver();
+  } else {
+    drawBackground();
+    drawScene();
+    drawPowerBar();
+    particles.render(ctx);
+    floatingText.render(ctx);
+    drawHUD();
+  }
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════
+async function init() {
+  state = 'loading';
+
+  // Draw loading
+  ctx.fillStyle = '#1A1A2E';
+  ctx.fillRect(0, 0, W, H);
+  ctx.font = '18px sans-serif';
+  ctx.fillStyle = COLORS.GOLD;
+  ctx.textAlign = 'center';
+  ctx.fillText('加载中...', W / 2, H / 2);
+
+  // Load hero data
+  await loadHeroList();
+  await preloadAvatars([HERO_ID]);
+
+  // Get personal best
+  const pb = getPersonalBest(GAME_ID);
+  bestScore = pb ? pb.score : 0;
+
+  // Start game loop
+  const loop = createGameLoop(update, render);
+  loop.start();
+
+  state = 'title';
+}
+
+init();
+</script>
+</body>
+</html>

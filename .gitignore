@@ -1,2 +1,11 @@
-.academy
+# Claude Code / IDE
+.academy/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Other
 brawl-stars-modes-report.html
+*.log

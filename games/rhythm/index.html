@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
-<title>李白·青莲剑歌</title>
+<title>李白·剑气音游</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action:none;user-select:none;-webkit-user-select:none;font-family:'PingFang SC','Microsoft YaHei',sans-serif}
@@ -30,126 +30,181 @@ const LIBAI = GAME_HEROES.LIBAI; // 131
 const S_LOADING = 0, S_TITLE = 1, S_COUNTDOWN = 2, S_PLAYING = 3, S_RESULTS = 4;
 
 // Note types
-const N_TAP = 0, N_HOLD = 1;
+const N_TAP = 0, N_HOLD = 1, N_ULT = 2;
 
 // Judgment thresholds (seconds)
 const J_PERFECT = 0.06, J_GREAT = 0.11, J_GOOD = 0.16;
 
-// Lane colors
-const LANE_COLORS = ['#3498DB', '#2ECC71', '#F1C40F', '#E74C3C'];
-const LANE_RGB = ['52,152,219', '46,204,113', '241,196,15', '231,76,60'];
-const LANE_LABELS = ['普攻', '一技能', '二技能', '大招'];
-const LANE_GLOW = ['rgba(52,152,219,0.6)', 'rgba(46,204,113,0.6)', 'rgba(241,196,15,0.6)', 'rgba(231,76,60,0.6)'];
+// 3 main lanes + 1 ultimate lane (center overlay)
+const NUM_LANES = 3;
+const LANE_COLORS = ['#3498DB', '#2ECC71', '#E74C3C'];
+const LANE_RGB = ['52,152,219', '46,204,113', '231,76,60'];
+const LANE_LABELS = ['普攻', '将进酒', '神来之笔'];
+const LANE_GLOW = ['rgba(52,152,219,0.6)', 'rgba(46,204,113,0.6)', 'rgba(231,76,60,0.6)'];
+const ULT_COLOR = '#FFD700';
+const ULT_RGB = '255,215,0';
 
 // Judgment line position
-const JUDGE_Y_FRAC = 0.78;
+const JUDGE_Y_FRAC = 0.75;
 
 // Scroll speed
 const SCROLL_WINDOW = 1.8;
 
 // Combo multiplier thresholds
-const COMBO_MULT = [[100, 4], [50, 3], [30, 2], [10, 1.5], [0, 1]];
+const COMBO_MULT = [[50, 3], [25, 2], [10, 1.5], [0, 1]];
 
 // Grading thresholds
 const GRADES = [['S', 0.95], ['A', 0.85], ['B', 0.70], ['C', 0]];
 
+// Sword Energy (剑气) system
+const MAX_ENERGY = 4;
+const ULT_DURATION = 2.0; // seconds of auto-scoring after ult hit
+const ULT_SCORE = 500;
+const ULT_AUTO_SCORE = 50;
+
 // ══════════════════════════════════════════════════════════════════════════════
-// SONG DATA + NOTE CHART GENERATION
+// SONG DATA + NOTE CHART GENERATION (with 剑气 system)
 // ══════════════════════════════════════════════════════════════════════════════
 
 function generateEasyChart(bpm, duration) {
-  // ~60 notes in 60s, mainly on full beats, one lane at a time
+  // ~60 notes, 3 lanes, simple patterns, ~4-5 ult opportunities
   const beatLen = 60 / bpm;
   const notes = [];
+  let simEnergy = 0; // simulate energy buildup for ult placement
 
-  // Musical patterns: groups of notes stepping across lanes with breathing room
   const phrases = [
-    // Ascending steps
-    { lanes: [0, 1, 2, 3], spacing: 1, repeat: 2 },
-    // Descending steps
-    { lanes: [3, 2, 1, 0], spacing: 1, repeat: 2 },
-    // Breathing room (rest)
-    { lanes: [], spacing: 0, repeat: 4 },
+    // Ascending steps across 3 lanes
+    { lanes: [0, 1, 2, 1], spacing: 1 },
+    // Rest
+    { lanes: [], spacing: 0, rest: 2 },
+    // Descending
+    { lanes: [2, 1, 0, 1], spacing: 1 },
+    // Rest
+    { lanes: [], spacing: 0, rest: 2 },
     // Alternating pairs
-    { lanes: [0, 2, 0, 2], spacing: 1, repeat: 1 },
-    { lanes: [1, 3, 1, 3], spacing: 1, repeat: 1 },
+    { lanes: [0, 2, 0, 2], spacing: 1 },
     // Rest
-    { lanes: [], spacing: 0, repeat: 4 },
+    { lanes: [], spacing: 0, rest: 2 },
+    // Center focus
+    { lanes: [1, 0, 1, 2], spacing: 1 },
+    // Rest
+    { lanes: [], spacing: 0, rest: 2 },
     // Call and response
-    { lanes: [0, null, 1, null], spacing: 1, repeat: 2 },
-    { lanes: [2, null, 3, null], spacing: 1, repeat: 2 },
+    { lanes: [0, null, 1, null], spacing: 1 },
+    { lanes: [2, null, 1, null], spacing: 1 },
     // Rest
-    { lanes: [], spacing: 0, repeat: 2 },
-    // Steady quarter notes center lanes
-    { lanes: [1, 2, 1, 2, 1, 2, 1, 2], spacing: 1, repeat: 1 },
+    { lanes: [], spacing: 0, rest: 2 },
+    // Steady quarter notes
+    { lanes: [0, 1, 2, 1, 0, 1, 2, 1], spacing: 1 },
     // Rest
-    { lanes: [], spacing: 0, repeat: 4 },
-    // Build-up ascending fast
-    { lanes: [0, 1, 2, 3, 0, 1, 2, 3], spacing: 1, repeat: 1 },
+    { lanes: [], spacing: 0, rest: 3 },
+    // Build-up
+    { lanes: [0, 1, 2, 0, 1, 2, 0, 1], spacing: 1 },
     // Rest
-    { lanes: [], spacing: 0, repeat: 2 },
+    { lanes: [], spacing: 0, rest: 2 },
     // Final phrase
-    { lanes: [3, 2, 1, 0, 3, 2, 1, 0], spacing: 1, repeat: 1 },
-    { lanes: [0, 0, 2, 2], spacing: 1, repeat: 1 },
+    { lanes: [2, 1, 0, 2, 1, 0], spacing: 1 },
+    { lanes: [0, 0, 1, 1], spacing: 1 },
   ];
 
-  let beat = 4; // start after 4 beats intro
+  let beat = 4;
   for (const phrase of phrases) {
     if (phrase.lanes.length === 0) {
-      beat += phrase.repeat;
+      beat += (phrase.rest || 2);
       continue;
     }
-    for (let r = 0; r < phrase.repeat; r++) {
-      for (const lane of phrase.lanes) {
-        if (lane !== null && beat * beatLen < duration - 3) {
-          notes.push({ time: beat * beatLen, lane, type: N_TAP });
+    for (const lane of phrase.lanes) {
+      if (lane !== null && beat * beatLen < duration - 3) {
+        notes.push({ time: beat * beatLen, lane, type: N_TAP });
+        simEnergy = Math.min(MAX_ENERGY, simEnergy + 1);
+        // Insert ult note when energy is full
+        if (simEnergy === MAX_ENERGY) {
+          beat += 2; // breathing room
+          if (beat * beatLen < duration - 3) {
+            notes.push({ time: beat * beatLen, lane: -1, type: N_ULT });
+            simEnergy = 0;
+            beat += 2; // rest after ult
+          }
         }
-        beat += phrase.spacing;
       }
+      beat += phrase.spacing;
     }
   }
 
-  // If we haven't filled enough, add some more patterns
+  // Fill if needed
   while (notes.length < 55 && beat * beatLen < duration - 3) {
-    const pattern = [0, 1, 2, 3];
+    const pattern = [0, 1, 2];
     for (const lane of pattern) {
       if (beat * beatLen < duration - 3) {
         notes.push({ time: beat * beatLen, lane, type: N_TAP });
+        simEnergy = Math.min(MAX_ENERGY, simEnergy + 1);
+        if (simEnergy === MAX_ENERGY) {
+          beat += 2;
+          if (beat * beatLen < duration - 3) {
+            notes.push({ time: beat * beatLen, lane: -1, type: N_ULT });
+            simEnergy = 0;
+            beat += 2;
+          }
+        }
       }
       beat += 1;
     }
-    beat += 4; // rest
+    beat += 3;
   }
 
   return notes;
 }
 
 function generateNormalChart(bpm, duration) {
-  // ~130 notes in 75s, beats + half-beats, occasional doubles
+  // ~130 notes, 3 lanes, doubles, syncopation, 6-8 ult opportunities
   const beatLen = 60 / bpm;
   const notes = [];
+  let simEnergy = 0;
 
-  function tap(lane, time) { if (time < duration - 2) notes.push({ time, lane, type: N_TAP }); }
-  function hold(lane, time, dur) { if (time < duration - 2) notes.push({ time, lane, type: N_HOLD, holdDuration: dur }); }
+  function tap(lane, time) {
+    if (time < duration - 2) {
+      notes.push({ time, lane, type: N_TAP });
+      simEnergy = Math.min(MAX_ENERGY, simEnergy + 1);
+    }
+  }
+  function hold(lane, time, dur) {
+    if (time < duration - 2) {
+      notes.push({ time, lane, type: N_HOLD, holdDuration: dur });
+      simEnergy = Math.min(MAX_ENERGY, simEnergy + 1);
+    }
+  }
   function doub(l1, l2, time) { tap(l1, time); tap(l2, time); }
+  function tryUlt(t) {
+    if (simEnergy >= MAX_ENERGY && t < duration - 2) {
+      notes.push({ time: t, lane: -1, type: N_ULT });
+      simEnergy = 0;
+      return true;
+    }
+    return false;
+  }
 
-  let t = 2.0; // start time
+  let t = 2.0;
 
   // Section A: quarter note streams (bars 1-8)
   for (let bar = 0; bar < 8; bar++) {
     const base = t + bar * 4 * beatLen;
     const seq = [
-      [0, 1, 2, 3],
-      [3, 2, 1, 0],
-      [0, 2, 1, 3],
-      [1, 3, 0, 2],
+      [0, 1, 2, 1],
+      [2, 1, 0, 1],
+      [0, 2, 1, 0],
+      [1, 0, 2, 1],
       [0, 0, 2, 2],
-      [1, 1, 3, 3],
+      [1, 1, 0, 0],
       [0, 2, 0, 2],
-      [3, 1, 3, 1],
+      [2, 1, 2, 1],
     ][bar];
     for (let i = 0; i < 4; i++) {
       tap(seq[i], base + i * beatLen);
+    }
+    // Check ult opportunity after every 2 bars
+    if (bar % 2 === 1) {
+      const ultTime = base + 4 * beatLen + beatLen;
+      tryUlt(ultTime);
     }
   }
 
@@ -162,21 +217,25 @@ function generateNormalChart(bpm, duration) {
     if (bar % 4 === 0) {
       hold(0, base, beatLen * 2);
       tap(2, base + beatLen * 2);
-      tap(3, base + beatLen * 3);
+      tap(1, base + beatLen * 3);
     } else if (bar % 4 === 1) {
       for (let i = 0; i < 4; i++) {
-        tap(i % 4, base + i * beatLen * 0.5);
+        tap(i % 3, base + i * beatLen * 0.5);
       }
       tap(2, base + beatLen * 3);
     } else if (bar % 4 === 2) {
-      doub(0, 3, base);
+      doub(0, 2, base);
       tap(1, base + beatLen);
       tap(2, base + beatLen * 2);
-      doub(1, 2, base + beatLen * 3);
+      doub(0, 1, base + beatLen * 3);
     } else {
-      tap(3, base);
+      tap(2, base);
       hold(1, base + beatLen, beatLen * 1.5);
       tap(0, base + beatLen * 3);
+    }
+    if (bar % 3 === 2) {
+      const ultTime = base + 4 * beatLen + beatLen * 0.5;
+      tryUlt(ultTime);
     }
   }
 
@@ -187,11 +246,15 @@ function generateNormalChart(bpm, duration) {
   for (let bar = 0; bar < 8; bar++) {
     const base = t + bar * 4 * beatLen;
     for (let i = 0; i < 6; i++) {
-      const lane = [0, 1, 2, 3, 2, 1][i];
+      const lane = [0, 1, 2, 1, 0, 2][i];
       tap(lane, base + i * beatLen * 0.5);
     }
     if (bar % 2 === 0) {
-      doub(0, 3, base + beatLen * 3.5);
+      doub(0, 2, base + beatLen * 3.5);
+    }
+    if (bar % 4 === 3) {
+      const ultTime = base + 4 * beatLen + beatLen;
+      tryUlt(ultTime);
     }
   }
 
@@ -199,25 +262,49 @@ function generateNormalChart(bpm, duration) {
 }
 
 function generateHardChart(bpm, duration) {
-  // ~200 notes in 90s, beats + half + quarter beats, frequent doubles, holds
+  // ~200 notes, dense 3-lane patterns, holds, triples, 10+ ult opportunities
   const beatLen = 60 / bpm;
   const notes = [];
+  let simEnergy = 0;
 
-  function tap(lane, time) { if (time < duration - 2) notes.push({ time, lane, type: N_TAP }); }
-  function hold(lane, time, dur) { if (time < duration - 2) notes.push({ time, lane, type: N_HOLD, holdDuration: dur }); }
+  function tap(lane, time) {
+    if (time < duration - 2) {
+      notes.push({ time, lane, type: N_TAP });
+      simEnergy = Math.min(MAX_ENERGY, simEnergy + 1);
+    }
+  }
+  function hold(lane, time, dur) {
+    if (time < duration - 2) {
+      notes.push({ time, lane, type: N_HOLD, holdDuration: dur });
+      simEnergy = Math.min(MAX_ENERGY, simEnergy + 1);
+    }
+  }
   function doub(l1, l2, time) { tap(l1, time); tap(l2, time); }
+  function triple(time) { tap(0, time); tap(1, time); tap(2, time); }
+  function tryUlt(t) {
+    if (simEnergy >= MAX_ENERGY && t < duration - 2) {
+      notes.push({ time: t, lane: -1, type: N_ULT });
+      simEnergy = 0;
+      return true;
+    }
+    return false;
+  }
 
   let t = 1.0;
 
   // Section A: warm-up (8 bars)
   for (let bar = 0; bar < 8; bar++) {
     const base = t + bar * 4 * beatLen;
-    const lanes = [0, 1, 2, 3];
+    const lanes = [0, 1, 2];
     for (let i = 0; i < 4; i++) {
-      tap(lanes[(bar + i) % 4], base + i * beatLen);
+      tap(lanes[(bar + i) % 3], base + i * beatLen);
     }
     if (bar >= 4) {
-      tap((bar + 1) % 4, base + 3.5 * beatLen);
+      tap((bar + 1) % 3, base + 3.5 * beatLen);
+    }
+    if (bar === 3 || bar === 7) {
+      const ultTime = base + 4 * beatLen + beatLen * 0.5;
+      tryUlt(ultTime);
     }
   }
 
@@ -227,16 +314,20 @@ function generateHardChart(bpm, duration) {
     const base = t + bar * 4 * beatLen;
     for (let i = 0; i < 8; i++) {
       const patterns = [
-        [0, 1, 2, 3, 2, 1, 0, 1],
-        [3, 2, 1, 0, 1, 2, 3, 2],
-        [0, 2, 1, 3, 0, 2, 1, 3],
-        [1, 0, 3, 2, 1, 0, 3, 2],
-        [0, 3, 1, 2, 0, 3, 1, 2],
-        [2, 1, 0, 3, 2, 1, 0, 3],
-        [0, 1, 0, 2, 0, 3, 0, 2],
-        [3, 1, 3, 2, 3, 0, 3, 1],
+        [0, 1, 2, 1, 0, 1, 2, 1],
+        [2, 1, 0, 1, 2, 1, 0, 1],
+        [0, 2, 1, 0, 2, 1, 0, 2],
+        [1, 0, 2, 1, 0, 2, 1, 0],
+        [0, 2, 0, 1, 0, 2, 0, 1],
+        [2, 1, 2, 0, 2, 1, 2, 0],
+        [0, 1, 0, 2, 0, 1, 0, 2],
+        [2, 0, 2, 1, 2, 0, 2, 1],
       ];
       tap(patterns[bar % 8][i], base + i * beatLen * 0.5);
+    }
+    if (bar % 2 === 1) {
+      const ultTime = base + 4 * beatLen + beatLen * 0.5;
+      tryUlt(ultTime);
     }
   }
 
@@ -247,21 +338,25 @@ function generateHardChart(bpm, duration) {
     if (bar % 3 === 0) {
       hold(0, base, beatLen * 2);
       tap(2, base + beatLen);
-      tap(3, base + beatLen * 1.5);
-      doub(1, 3, base + beatLen * 2.5);
-      tap(2, base + beatLen * 3);
-      tap(0, base + beatLen * 3.5);
+      tap(1, base + beatLen * 1.5);
+      doub(1, 2, base + beatLen * 2.5);
+      tap(0, base + beatLen * 3);
+      tap(2, base + beatLen * 3.5);
     } else if (bar % 3 === 1) {
-      doub(0, 3, base);
-      doub(1, 2, base + beatLen);
-      hold(3, base + beatLen * 2, beatLen * 1.5);
+      doub(0, 2, base);
+      doub(0, 1, base + beatLen);
+      hold(2, base + beatLen * 2, beatLen * 1.5);
       tap(0, base + beatLen * 2.5);
       tap(1, base + beatLen * 3.5);
     } else {
       for (let i = 0; i < 6; i++) {
-        tap([0, 2, 3, 1, 0, 3][i], base + i * beatLen * 0.5);
+        tap([0, 2, 1, 0, 2, 1][i], base + i * beatLen * 0.5);
       }
-      doub(0, 3, base + beatLen * 3.5);
+      doub(0, 2, base + beatLen * 3.5);
+    }
+    if (bar % 3 === 2) {
+      const ultTime = base + 4 * beatLen + beatLen * 0.5;
+      tryUlt(ultTime);
     }
   }
 
@@ -270,16 +365,17 @@ function generateHardChart(bpm, duration) {
   for (let bar = 0; bar < 8 && t + bar * 4 * beatLen < duration - 3; bar++) {
     const base = t + bar * 4 * beatLen;
     for (let i = 0; i < 8; i++) {
-      const lane = [0, 3, 1, 2, 3, 0, 2, 1][i];
+      const lane = [0, 2, 1, 0, 2, 0, 1, 2][i];
       tap(lane, base + i * beatLen * 0.5);
     }
     if (bar % 2 === 0) {
-      doub(0, 2, base + beatLen * 0.25);
-      doub(1, 3, base + beatLen * 2.25);
+      doub(0, 1, base + beatLen * 0.25);
+      doub(1, 2, base + beatLen * 2.25);
     }
-    if (bar === 7) {
-      doub(0, 3, base + beatLen * 3.75);
-      doub(1, 2, base + beatLen * 3.75);
+    if (bar === 3 || bar === 7) {
+      triple(base + beatLen * 3.75);
+      const ultTime = base + 4 * beatLen + beatLen * 0.5;
+      tryUlt(ultTime);
     }
   }
 
@@ -640,12 +736,24 @@ let judgments = { perfect: 0, great: 0, good: 0, miss: 0 };
 // Active notes for gameplay
 let activeNotes = [];
 
-// Touch state per lane
-let laneTouched = [false, false, false, false];
-let laneFlash = [0, 0, 0, 0];
+// Touch state per lane (3 lanes + ult button)
+let laneTouched = [false, false, false];
+let laneFlash = [0, 0, 0];
+let ultTouched = false;
+let ultFlash = 0;
 
 // Hold tracking per lane
-let laneHolds = [null, null, null, null];
+let laneHolds = [null, null, null];
+
+// Sword Energy (剑气) System
+let swordEnergy = 0; // 0-4
+let ultActive = false;
+let ultTimer = 0;
+let ultVisualTimer = 0; // for the screen-wide slash animation
+const ULT_VISUAL_DURATION = 1.5;
+let ultSlashLines = []; // animated slash lines
+let energyPulseTimer = 0; // pulse animation when full
+let energyGainAnim = []; // animated energy gain indicators
 
 // Countdown
 let countdownTimer = 0;
@@ -657,6 +765,8 @@ let comboScale = 1;
 let swordFlashTimer = 0;
 let beatPulse = 0;
 let screenShake = 0;
+let goldBorderGlow = 0; // glows when energy is full
+let slowMoTimer = 0; // brief slow-mo on perfect
 
 // Title animation
 let titleTime = 0;
@@ -674,16 +784,28 @@ let showMissingPrompt = false;
 let missingPromptSong = null;
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TOUCH HANDLING
+// TOUCH HANDLING (3 lanes + ultimate button)
 // ══════════════════════════════════════════════════════════════════════════════
 
 function setupTouchHandlers() {
   const activeTouches = new Map();
 
-  function getLane(x) {
-    const laneWidth = W / 4;
-    const lane = Math.floor(x / laneWidth);
-    return Math.max(0, Math.min(3, lane));
+  function getLane(x, y) {
+    const judgeY = H * JUDGE_Y_FRAC;
+    const laneW = W / NUM_LANES;
+    // Check if tapping the ult button area (above the 3 lanes)
+    if (swordEnergy >= MAX_ENERGY) {
+      const ultBtnY = judgeY + 2;
+      const ultBtnH = (H - judgeY) * 0.35;
+      const ultBtnW = W * 0.5;
+      const ultBtnX = (W - ultBtnW) / 2;
+      if (y >= ultBtnY && y <= ultBtnY + ultBtnH && x >= ultBtnX && x <= ultBtnX + ultBtnW) {
+        return 'ult';
+      }
+    }
+    // Normal lane detection in bottom area
+    const lane = Math.floor(x / laneW);
+    return Math.max(0, Math.min(NUM_LANES - 1, lane));
   }
 
   function getCanvasPos(touch) {
@@ -701,14 +823,20 @@ function setupTouchHandlers() {
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
       const pos = getCanvasPos(touch);
-      const lane = getLane(pos.x);
+      const lane = getLane(pos.x, pos.y);
 
       activeTouches.set(touch.identifier, lane);
 
       if (state === S_PLAYING) {
-        laneTouched[lane] = true;
-        laneFlash[lane] = 0.15;
-        handleLanePress(lane, touch.identifier);
+        if (lane === 'ult') {
+          ultTouched = true;
+          ultFlash = 0.15;
+          handleUltPress(touch.identifier);
+        } else {
+          laneTouched[lane] = true;
+          laneFlash[lane] = 0.15;
+          handleLanePress(lane, touch.identifier);
+        }
       } else if (state === S_TITLE) {
         handleTitleTap(pos.x, pos.y);
       } else if (state === S_RESULTS) {
@@ -722,16 +850,25 @@ function setupTouchHandlers() {
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
       const pos = getCanvasPos(touch);
-      const newLane = getLane(pos.x);
+      const newLane = getLane(pos.x, pos.y);
       const oldLane = activeTouches.get(touch.identifier);
       if (oldLane !== undefined && oldLane !== newLane) {
-        laneTouched[oldLane] = false;
-        if (laneHolds[oldLane] && laneHolds[oldLane].touchId === touch.identifier) {
-          endHoldNote(oldLane);
+        if (oldLane === 'ult') {
+          ultTouched = false;
+        } else {
+          laneTouched[oldLane] = false;
+          if (laneHolds[oldLane] && laneHolds[oldLane].touchId === touch.identifier) {
+            endHoldNote(oldLane);
+          }
         }
         activeTouches.set(touch.identifier, newLane);
-        laneTouched[newLane] = true;
-        laneFlash[newLane] = 0.15;
+        if (newLane === 'ult') {
+          ultTouched = true;
+          ultFlash = 0.15;
+        } else {
+          laneTouched[newLane] = true;
+          laneFlash[newLane] = 0.15;
+        }
       }
     }
   }, { passive: false });
@@ -743,9 +880,13 @@ function setupTouchHandlers() {
       const lane = activeTouches.get(touch.identifier);
       activeTouches.delete(touch.identifier);
       if (lane !== undefined) {
-        laneTouched[lane] = false;
-        if (laneHolds[lane] && laneHolds[lane].touchId === touch.identifier) {
-          endHoldNote(lane);
+        if (lane === 'ult') {
+          ultTouched = false;
+        } else {
+          laneTouched[lane] = false;
+          if (laneHolds[lane] && laneHolds[lane].touchId === touch.identifier) {
+            endHoldNote(lane);
+          }
         }
       }
     }
@@ -757,8 +898,12 @@ function setupTouchHandlers() {
       const lane = activeTouches.get(touch.identifier);
       activeTouches.delete(touch.identifier);
       if (lane !== undefined) {
-        laneTouched[lane] = false;
-        if (laneHolds[lane]) endHoldNote(lane);
+        if (lane === 'ult') {
+          ultTouched = false;
+        } else {
+          laneTouched[lane] = false;
+          if (laneHolds[lane]) endHoldNote(lane);
+        }
       }
     }
   }, { passive: false });
@@ -774,14 +919,20 @@ function setupTouchHandlers() {
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const lane = getLane(x);
+    const lane = getLane(x, y);
     mouseDown = true;
     mouseLane = lane;
 
     if (state === S_PLAYING) {
-      laneTouched[lane] = true;
-      laneFlash[lane] = 0.15;
-      handleLanePress(lane);
+      if (lane === 'ult') {
+        ultTouched = true;
+        ultFlash = 0.15;
+        handleUltPress();
+      } else {
+        laneTouched[lane] = true;
+        laneFlash[lane] = 0.15;
+        handleLanePress(lane);
+      }
     } else if (state === S_TITLE) {
       handleTitleTap(x, y);
     } else if (state === S_RESULTS) {
@@ -790,40 +941,86 @@ function setupTouchHandlers() {
   });
   canvas.addEventListener('mouseup', () => {
     mouseDown = false;
-    if (mouseLane >= 0) {
+    if (mouseLane === 'ult') {
+      ultTouched = false;
+    } else if (mouseLane >= 0) {
       laneTouched[mouseLane] = false;
       if (laneHolds[mouseLane]) endHoldNote(mouseLane);
-      mouseLane = -1;
     }
+    mouseLane = -1;
   });
   canvas.addEventListener('mousemove', (e) => {
     if (!mouseDown) return;
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const newLane = getLane(x);
+    const y = e.clientY - rect.top;
+    const newLane = getLane(x, y);
     if (newLane !== mouseLane) {
-      if (mouseLane >= 0) {
+      if (mouseLane === 'ult') {
+        ultTouched = false;
+      } else if (mouseLane >= 0) {
         laneTouched[mouseLane] = false;
         if (laneHolds[mouseLane]) endHoldNote(mouseLane);
       }
       mouseLane = newLane;
-      laneTouched[newLane] = true;
-      laneFlash[newLane] = 0.15;
+      if (newLane === 'ult') {
+        ultTouched = true;
+        ultFlash = 0.15;
+      } else {
+        laneTouched[newLane] = true;
+        laneFlash[newLane] = 0.15;
+      }
+    }
+  });
+
+  // Keyboard support for desktop
+  const keyLaneMap = { 'd': 0, 'f': 1, 'j': 2, 'D': 0, 'F': 1, 'J': 2 };
+  const keyUlt = [' ', 'k', 'K'];
+  document.addEventListener('keydown', (e) => {
+    if (state !== S_PLAYING) return;
+    if (e.repeat) return;
+    if (keyUlt.includes(e.key)) {
+      ultTouched = true;
+      ultFlash = 0.15;
+      handleUltPress();
+    } else if (keyLaneMap[e.key] !== undefined) {
+      const lane = keyLaneMap[e.key];
+      laneTouched[lane] = true;
+      laneFlash[lane] = 0.15;
+      handleLanePress(lane);
+    }
+  });
+  document.addEventListener('keyup', (e) => {
+    if (keyUlt.includes(e.key)) {
+      ultTouched = false;
+    } else if (keyLaneMap[e.key] !== undefined) {
+      const lane = keyLaneMap[e.key];
+      laneTouched[lane] = false;
+      if (laneHolds[lane]) endHoldNote(lane);
     }
   });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// GAMEPLAY LOGIC
+// GAMEPLAY LOGIC (with 剑气 System)
 // ══════════════════════════════════════════════════════════════════════════════
 
+function getComboMult() {
+  let mult = 1;
+  for (const [threshold, m] of COMBO_MULT) {
+    if (combo >= threshold) { mult = m; break; }
+  }
+  return mult;
+}
+
 function handleLanePress(lane, touchId) {
-  if (state !== S_PLAYING) return;
+  if (state !== S_PLAYING || ultActive) return;
 
   let bestNote = null;
   let bestDiff = Infinity;
 
   for (const note of activeNotes) {
+    if (note.type === N_ULT) continue; // ult notes handled separately
     if (note.lane !== lane || note.hit || note.missed) continue;
     const diff = Math.abs(note.time - songTime);
     if (diff < J_GOOD + 0.02 && diff < bestDiff) {
@@ -843,16 +1040,26 @@ function handleLanePress(lane, touchId) {
     color = '#FFD700';
     audio && audio.playBeat(true);
     screenShake = 0.03;
+    // Perfect: +1 energy AND brief slow-mo effect
+    swordEnergy = Math.min(MAX_ENERGY, swordEnergy + 1);
+    slowMoTimer = 0.15;
+    addEnergyGainAnim();
   } else if (diff <= J_GREAT) {
     judgment = 'GREAT';
     scoreVal = 75;
     color = '#3498DB';
     audio && audio.playBeat(false);
+    // Regular hit: +1 energy
+    swordEnergy = Math.min(MAX_ENERGY, swordEnergy + 1);
+    addEnergyGainAnim();
   } else if (diff <= J_GOOD) {
     judgment = 'GOOD';
     scoreVal = 50;
     color = '#2ECC71';
     audio && audio.playBeat(false);
+    // Regular hit: +1 energy
+    swordEnergy = Math.min(MAX_ENERGY, swordEnergy + 1);
+    addEnergyGainAnim();
   } else {
     return;
   }
@@ -865,16 +1072,13 @@ function handleLanePress(lane, touchId) {
   if (combo > maxCombo) maxCombo = combo;
   comboScale = 1.4;
 
-  let mult = 1;
-  for (const [threshold, m] of COMBO_MULT) {
-    if (combo >= threshold) { mult = m; break; }
-  }
-
+  const mult = getComboMult();
   const finalScore = Math.round(scoreVal * mult);
   score += finalScore;
   judgments[judgment.toLowerCase()]++;
 
-  const laneX = (lane + 0.5) * (W / 4);
+  const laneW = W / NUM_LANES;
+  const laneX = (lane + 0.5) * laneW;
   const judgeY = H * JUDGE_Y_FRAC;
   judgmentDisplay = { text: judgment, color, timer: 0.6, x: laneX };
 
@@ -889,6 +1093,11 @@ function handleLanePress(lane, touchId) {
   });
 
   floatText.add(laneX, judgeY - 30, `+${finalScore}`, { color, size: 18, duration: 0.8 });
+
+  // Check energy full
+  if (swordEnergy === MAX_ENERGY) {
+    goldBorderGlow = 1;
+  }
 
   if (combo === 50) {
     swordFlashTimer = 1.5;
@@ -907,6 +1116,84 @@ function handleLanePress(lane, touchId) {
   }
 }
 
+function handleUltPress(touchId) {
+  if (state !== S_PLAYING) return;
+  if (swordEnergy < MAX_ENERGY) return;
+  if (ultActive) return;
+
+  // Find an ult note in the judgment window
+  let bestNote = null;
+  let bestDiff = Infinity;
+
+  for (const note of activeNotes) {
+    if (note.type !== N_ULT || note.hit || note.missed) continue;
+    const diff = Math.abs(note.time - songTime);
+    if (diff < J_GOOD + 0.04 && diff < bestDiff) {
+      bestDiff = diff;
+      bestNote = note;
+    }
+  }
+
+  if (!bestNote) return;
+
+  // Ultimate hit!
+  bestNote.hit = true;
+  bestNote.hitTime = songTime;
+  bestNote.judgment = 'ULTIMATE';
+
+  // Reset energy, activate ult
+  swordEnergy = 0;
+  ultActive = true;
+  ultTimer = ULT_DURATION;
+  ultVisualTimer = ULT_VISUAL_DURATION;
+  goldBorderGlow = 0;
+
+  // Generate slash lines
+  ultSlashLines = [
+    { x1: -50, y1: H * 0.2, x2: W + 50, y2: H * 0.6, delay: 0 },
+    { x1: W + 50, y1: H * 0.1, x2: -50, y2: H * 0.7, delay: 0.1 },
+    { x1: W * 0.5, y1: -50, x2: W * 0.5, y2: H + 50, delay: 0.2 },
+  ];
+
+  // Score: 500 * combo multiplier
+  combo++;
+  if (combo > maxCombo) maxCombo = combo;
+  comboScale = 1.8;
+
+  const mult = getComboMult();
+  const finalScore = Math.round(ULT_SCORE * mult);
+  score += finalScore;
+
+  // Massive visual effects
+  screenShake = 0.15;
+
+  // Gold particle explosion from center
+  particles.emit(W / 2, H / 2, {
+    count: 60,
+    color: '#FFD700',
+    speed: 300,
+    life: 1.2,
+    size: 6,
+    gravity: 100,
+  });
+  particles.emit(W / 2, H / 2, {
+    count: 30,
+    color: '#FFF',
+    speed: 200,
+    life: 0.8,
+    size: 3,
+    gravity: 150,
+  });
+
+  floatText.add(W / 2, H * 0.35, `青莲剑歌! +${finalScore}`, { color: '#FFD700', size: 28, duration: 1.5 });
+
+  audio && audio.playCombo(10);
+}
+
+function addEnergyGainAnim() {
+  energyGainAnim.push({ timer: 0.5, value: swordEnergy });
+}
+
 function endHoldNote(lane) {
   const hold = laneHolds[lane];
   if (!hold) return;
@@ -920,7 +1207,8 @@ function endHoldNote(lane) {
 
   if (heldRatio > 0.6) {
     score += holdBonus;
-    const laneX = (lane + 0.5) * (W / 4);
+    const laneW = W / NUM_LANES;
+    const laneX = (lane + 0.5) * laneW;
     floatText.add(laneX, H * JUDGE_Y_FRAC - 50, `+${holdBonus}`, {
       color: '#FFD700', size: 16, duration: 0.6,
     });
@@ -932,18 +1220,46 @@ function endHoldNote(lane) {
 function processAutoMiss(dt) {
   for (const note of activeNotes) {
     if (note.hit || note.missed) continue;
+
+    // Ult notes: only visible/active when energy is full
+    if (note.type === N_ULT) {
+      // If energy isn't full, ult notes are invisible and just pass through
+      if (swordEnergy < MAX_ENERGY) {
+        if (songTime - note.time > J_GOOD + 0.1) {
+          note.missed = true;
+          note.missTime = songTime;
+          // No penalty for missing ult when energy isn't full
+        }
+        continue;
+      }
+      // Energy is full but player missed the ult note
+      if (songTime - note.time > J_GOOD + 0.04) {
+        note.missed = true;
+        note.missTime = songTime;
+        // Energy stays at 4, just a missed opportunity
+        // No combo break for ult miss
+      }
+      continue;
+    }
+
+    // Regular notes
     if (songTime - note.time > J_GOOD + 0.02) {
       note.missed = true;
       note.missTime = songTime;
       combo = 0;
       judgments.miss++;
+      // Miss: -1 energy
+      swordEnergy = Math.max(0, swordEnergy - 1);
+      if (swordEnergy < MAX_ENERGY) goldBorderGlow = 0;
 
-      const laneX = (note.lane + 0.5) * (W / 4);
+      const laneW = W / NUM_LANES;
+      const laneX = (note.lane + 0.5) * laneW;
       judgmentDisplay = { text: 'MISS', color: '#E74C3C', timer: 0.5, x: laneX };
     }
   }
 
-  for (let lane = 0; lane < 4; lane++) {
+  // Handle hold note endings
+  for (let lane = 0; lane < NUM_LANES; lane++) {
     if (laneHolds[lane]) {
       const note = activeNotes[laneHolds[lane].noteIndex];
       if (note) {
@@ -952,6 +1268,48 @@ function processAutoMiss(dt) {
           endHoldNote(lane);
         }
       }
+    }
+  }
+}
+
+function processUltAutoScore(dt) {
+  if (!ultActive) return;
+  ultTimer -= dt;
+  if (ultTimer <= 0) {
+    ultActive = false;
+    ultTimer = 0;
+    return;
+  }
+
+  // Auto-hit all notes currently in the judgment window
+  for (const note of activeNotes) {
+    if (note.hit || note.missed || note.type === N_ULT) continue;
+    const diff = note.time - songTime;
+    // Auto-hit notes that are within a generous window
+    if (diff > -0.3 && diff < 0.3) {
+      note.hit = true;
+      note.hitTime = songTime;
+      note.judgment = 'AUTO';
+      note.autoHit = true;
+      score += ULT_AUTO_SCORE;
+      combo++;
+      if (combo > maxCombo) maxCombo = combo;
+      // Energy gain from auto-hit
+      swordEnergy = Math.min(MAX_ENERGY, swordEnergy + 1);
+
+      const laneW = W / NUM_LANES;
+      const laneX = (note.lane + 0.5) * laneW;
+      particles.emit(laneX, H * JUDGE_Y_FRAC, {
+        count: 5,
+        color: '#FFD700',
+        speed: 100,
+        life: 0.3,
+        size: 3,
+        gravity: 150,
+      });
+      floatText.add(laneX, H * JUDGE_Y_FRAC - 20, `+${ULT_AUTO_SCORE}`, {
+        color: '#FFD700', size: 14, duration: 0.5,
+      });
     }
   }
 }
@@ -994,14 +1352,11 @@ function handleTitleTap(x, y) {
     const song = SONGS[titleSelectedSong];
     const status = songMp3Status[song.id];
     if (status === 'loaded') {
-      // MP3 available, start directly
       startGame(titleSelectedSong, false);
     } else if (status === 'missing' || status === 'error') {
-      // Show missing prompt
       showMissingPrompt = true;
       missingPromptSong = song;
     } else {
-      // Not loaded yet (no status means never attempted or still loading), use synth
       startGame(titleSelectedSong, true);
     }
   }
@@ -1051,7 +1406,18 @@ function startGame(songIndex, forceSynth) {
   swordFlashTimer = 0;
   beatPulse = 0;
   screenShake = 0;
-  laneHolds = [null, null, null, null];
+  laneHolds = [null, null, null];
+
+  // Reset 剑气 system
+  swordEnergy = 0;
+  ultActive = false;
+  ultTimer = 0;
+  ultVisualTimer = 0;
+  ultSlashLines = [];
+  energyPulseTimer = 0;
+  energyGainAnim = [];
+  goldBorderGlow = 0;
+  slowMoTimer = 0;
 
   // Clone notes with gameplay state
   activeNotes = currentSong.notes.map(n => ({
@@ -1062,10 +1428,12 @@ function startGame(songIndex, forceSynth) {
     missTime: 0,
     holdComplete: false,
     judgment: '',
+    autoHit: false,
   }));
 
-  // Calculate max possible score
+  // Calculate max possible score (assume all perfect + all ults hit)
   let simCombo = 0;
+  let simEnergy = 0;
   maxPossibleScore = 0;
   for (const note of activeNotes) {
     simCombo++;
@@ -1073,8 +1441,14 @@ function startGame(songIndex, forceSynth) {
     for (const [threshold, m] of COMBO_MULT) {
       if (simCombo >= threshold) { mult = m; break; }
     }
-    maxPossibleScore += Math.round(100 * mult);
-    if (note.type === N_HOLD) maxPossibleScore += 50;
+    if (note.type === N_ULT) {
+      maxPossibleScore += Math.round(ULT_SCORE * mult);
+      simEnergy = 0;
+    } else {
+      maxPossibleScore += Math.round(100 * mult);
+      simEnergy++;
+      if (note.type === N_HOLD) maxPossibleScore += 50;
+    }
   }
 
   // Start countdown
@@ -1110,7 +1484,6 @@ function startPlaying() {
 
     musicSourceNode.onended = () => {
       if (state === S_PLAYING) {
-        // Give a small delay before showing results so last notes can be judged
         setTimeout(() => { if (state === S_PLAYING) showResults(); }, 500);
       }
     };
@@ -1180,14 +1553,32 @@ function update(dt) {
   particles.update(dt);
   floatText.update(dt);
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < NUM_LANES; i++) {
     if (laneFlash[i] > 0) laneFlash[i] = Math.max(0, laneFlash[i] - dt);
   }
+  if (ultFlash > 0) ultFlash = Math.max(0, ultFlash - dt);
   if (judgmentDisplay.timer > 0) judgmentDisplay.timer -= dt;
   if (comboScale > 1) comboScale = Math.max(1, comboScale - dt * 3);
   if (swordFlashTimer > 0) swordFlashTimer -= dt;
   if (beatPulse > 0) beatPulse = Math.max(0, beatPulse - dt * 4);
   if (screenShake > 0) screenShake = Math.max(0, screenShake - dt * 2);
+  if (slowMoTimer > 0) slowMoTimer = Math.max(0, slowMoTimer - dt);
+  if (ultVisualTimer > 0) ultVisualTimer = Math.max(0, ultVisualTimer - dt);
+  if (goldBorderGlow > 0 && swordEnergy < MAX_ENERGY) goldBorderGlow = Math.max(0, goldBorderGlow - dt * 2);
+
+  // Energy pulse animation when full
+  if (swordEnergy >= MAX_ENERGY) {
+    energyPulseTimer += dt * 3;
+    goldBorderGlow = 0.5 + Math.sin(energyPulseTimer) * 0.5;
+  } else {
+    energyPulseTimer = 0;
+  }
+
+  // Energy gain animation
+  energyGainAnim = energyGainAnim.filter(a => {
+    a.timer -= dt;
+    return a.timer > 0;
+  });
 
   if (state === S_LOADING) {
     // Loading handled in init
@@ -1221,6 +1612,7 @@ function update(dt) {
     }
 
     processAutoMiss(dt);
+    processUltAutoScore(dt);
 
     // Check song end
     if (songTime >= currentSong.duration) {
@@ -1255,8 +1647,11 @@ function render() {
     renderNotes();
     renderJudgmentLine();
     renderLaneButtons();
+    renderSwordEnergyIndicator();
     renderHUD();
     renderEffects();
+    renderUltEffect();
+    renderGoldBorder();
   } else if (state === S_RESULTS) {
     renderResults();
   } else if (state === S_LOADING) {
@@ -1288,6 +1683,15 @@ function renderBackground() {
     ctx.fillRect(x - 40, 0, 80, H);
   }
   ctx.restore();
+
+  // Darken during ult visual
+  if (ultVisualTimer > 0 && state === S_PLAYING) {
+    const darkAlpha = Math.min(0.5, ultVisualTimer / ULT_VISUAL_DURATION * 0.6);
+    ctx.save();
+    ctx.fillStyle = `rgba(0,0,0,${darkAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
 
   if (state === S_PLAYING || state === S_COUNTDOWN) {
     ctx.save();
@@ -1396,12 +1800,12 @@ function renderTitle() {
   ctx.font = `bold ${W * 0.08}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('李白·青莲剑歌', cx, H * 0.28);
+  ctx.fillText('剑气音游', cx, H * 0.28);
 
   // Subtitle
   ctx.fillStyle = 'rgba(212,168,75,0.6)';
   ctx.font = `${W * 0.035}px sans-serif`;
-  ctx.fillText('节奏挑战 · 王者荣耀', cx, H * 0.33);
+  ctx.fillText('李白·侠客行 · 王者荣耀', cx, H * 0.33);
 
   // Season info
   if (season) {
@@ -1618,20 +2022,20 @@ function renderMissingPrompt() {
 }
 
 function renderPlayfield() {
-  const laneW = W / 4;
+  const laneW = W / NUM_LANES;
   const judgeY = H * JUDGE_Y_FRAC;
 
   ctx.save();
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 1;
-  for (let i = 1; i < 4; i++) {
+  for (let i = 1; i < NUM_LANES; i++) {
     ctx.beginPath();
     ctx.moveTo(i * laneW, 0);
     ctx.lineTo(i * laneW, judgeY);
     ctx.stroke();
   }
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < NUM_LANES; i++) {
     const grad = ctx.createLinearGradient(0, judgeY - H * 0.15, 0, judgeY);
     grad.addColorStop(0, 'transparent');
     grad.addColorStop(1, `rgba(${LANE_RGB[i]},0.05)`);
@@ -1658,8 +2062,8 @@ function renderJudgmentLine() {
   ctx.shadowBlur = 0;
   ctx.restore();
 
-  const laneW = W / 4;
-  for (let i = 0; i < 4; i++) {
+  const laneW = W / NUM_LANES;
+  for (let i = 0; i < NUM_LANES; i++) {
     if (laneFlash[i] > 0) {
       ctx.save();
       const alpha = laneFlash[i] / 0.15;
@@ -1677,7 +2081,7 @@ function renderJudgmentLine() {
 }
 
 function renderNotes() {
-  const laneW = W / 4;
+  const laneW = W / NUM_LANES;
   const judgeY = H * JUDGE_Y_FRAC;
   const topY = H * 0.05;
   const scrollRange = judgeY - topY;
@@ -1688,6 +2092,76 @@ function renderNotes() {
     if (timeDiff > SCROLL_WINDOW + 0.5) continue;
     if (timeDiff < -1) continue;
 
+    // Ultimate notes: only show when energy is full
+    if (note.type === N_ULT) {
+      if (swordEnergy < MAX_ENERGY) continue;
+      if (note.hit || note.missed) {
+        if (note.hit) {
+          // Hit ult note fades with gold burst
+          const elapsed = songTime - note.hitTime;
+          if (elapsed > 0.5) continue;
+          const fade = 1 - elapsed / 0.5;
+          ctx.save();
+          ctx.globalAlpha = fade * 0.8;
+          const scale = 1 + elapsed * 5;
+          ctx.translate(W / 2, judgeY);
+          ctx.scale(scale, scale);
+          const ultNoteW = laneW * 0.8;
+          const ultNoteH = laneW * 0.35;
+          ctx.fillStyle = '#FFD700';
+          ctx.shadowColor = '#FFD700';
+          ctx.shadowBlur = 30;
+          drawRoundRect(ctx, -ultNoteW / 2, -ultNoteH / 2, ultNoteW, ultNoteH, 12);
+          ctx.fill();
+          ctx.restore();
+        }
+        continue;
+      }
+
+      // Draw ult note (center lane, larger, golden)
+      const progress = 1 - (timeDiff / SCROLL_WINDOW);
+      const noteY = topY + progress * scrollRange;
+      if (noteY < topY - 50 || noteY > judgeY + 50) continue;
+
+      const ultNoteW = laneW * 1.0;
+      const ultNoteH = laneW * 0.35;
+      const pulseScale = 1 + Math.sin(songTime * 6) * 0.08;
+
+      ctx.save();
+      ctx.translate(W / 2, noteY);
+      ctx.scale(pulseScale, pulseScale);
+
+      // Glow
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = 20 + Math.sin(songTime * 8) * 10;
+
+      // Note body
+      const ultGrad = ctx.createLinearGradient(-ultNoteW / 2, 0, ultNoteW / 2, 0);
+      ultGrad.addColorStop(0, '#B8860B');
+      ultGrad.addColorStop(0.5, '#FFD700');
+      ultGrad.addColorStop(1, '#B8860B');
+      ctx.fillStyle = ultGrad;
+      drawRoundRect(ctx, -ultNoteW / 2, -ultNoteH / 2, ultNoteW, ultNoteH, 12);
+      ctx.fill();
+
+      // Highlight
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      drawRoundRect(ctx, -ultNoteW / 2 + 4, -ultNoteH / 2 + 4, ultNoteW - 8, ultNoteH * 0.4, 8);
+      ctx.fill();
+
+      // Sword icon text
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.font = `bold ${ultNoteH * 0.55}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('\u2694', 0, 0);
+
+      ctx.restore();
+      continue;
+    }
+
+    // Regular notes (lanes 0-2)
     const laneX = note.lane * laneW;
     const laneCX = laneX + laneW / 2;
     const noteW = laneW * 0.65;
@@ -1707,7 +2181,9 @@ function renderNotes() {
       ctx.globalAlpha = fade * 0.5;
       ctx.translate(laneCX, judgeY);
       ctx.scale(scale, scale);
-      drawNoteShape(ctx, -noteW / 2, -noteH / 2, noteW, noteH, note, brightness);
+      ctx.fillStyle = note.autoHit ? '#FFD700' : LANE_COLORS[note.lane];
+      drawRoundRect(ctx, -noteW / 2, -noteH / 2, noteW, noteH, 8);
+      ctx.fill();
       ctx.restore();
       continue;
     }
@@ -1786,25 +2262,66 @@ function renderNotes() {
   }
 }
 
-function drawNoteShape(ctx, x, y, w, h, note, brightness) {
-  ctx.fillStyle = LANE_COLORS[note.lane];
-  drawRoundRect(ctx, x, y, w, h, 8);
-  ctx.fill();
-}
-
 function renderLaneButtons() {
-  const laneW = W / 4;
+  const laneW = W / NUM_LANES;
   const judgeY = H * JUDGE_Y_FRAC;
   const btnY = judgeY + 2;
   const btnH = H - btnY;
+  const ultBtnH = btnH * 0.35;
+  const regularBtnY = btnY + (swordEnergy >= MAX_ENERGY ? ultBtnH + 2 : 0);
+  const regularBtnH = btnH - (swordEnergy >= MAX_ENERGY ? ultBtnH + 2 : 0);
 
-  for (let i = 0; i < 4; i++) {
+  // Ultimate button (appears when energy is full, above regular lanes)
+  if (swordEnergy >= MAX_ENERGY) {
+    const ultBtnW = W * 0.5;
+    const ultBtnX = (W - ultBtnW) / 2;
+    const isPressed = ultTouched;
+
+    ctx.save();
+    // Gold background with pulse
+    const pulseAlpha = 0.3 + Math.sin(energyPulseTimer) * 0.15;
+    const ultGrad = ctx.createLinearGradient(0, btnY, 0, btnY + ultBtnH);
+    if (isPressed) {
+      ultGrad.addColorStop(0, `rgba(${ULT_RGB},0.6)`);
+      ultGrad.addColorStop(1, `rgba(${ULT_RGB},0.3)`);
+    } else {
+      ultGrad.addColorStop(0, `rgba(${ULT_RGB},${pulseAlpha + 0.1})`);
+      ultGrad.addColorStop(1, `rgba(${ULT_RGB},${pulseAlpha * 0.5})`);
+    }
+    drawRoundRect(ctx, ultBtnX, btnY, ultBtnW, ultBtnH, 12);
+    ctx.fillStyle = ultGrad;
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = isPressed ? '#FFF' : '#FFD700';
+    ctx.lineWidth = isPressed ? 3 : 2;
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 10 + Math.sin(energyPulseTimer) * 8;
+    drawRoundRect(ctx, ultBtnX, btnY, ultBtnW, ultBtnH, 12);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Label
+    const scale = isPressed ? 0.92 : 1 + Math.sin(energyPulseTimer * 1.5) * 0.05;
+    ctx.translate(ultBtnX + ultBtnW / 2, btnY + ultBtnH * 0.5);
+    ctx.scale(scale, scale);
+    ctx.fillStyle = isPressed ? '#FFF' : '#FFD700';
+    ctx.font = `bold ${W * 0.045}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('\u2694 青莲剑歌', 0, 0);
+
+    ctx.restore();
+  }
+
+  // Regular 3 lane buttons
+  for (let i = 0; i < NUM_LANES; i++) {
     const x = i * laneW;
     const isPressed = laneTouched[i];
 
     ctx.save();
 
-    const grad = ctx.createLinearGradient(0, btnY, 0, btnY + btnH);
+    const grad = ctx.createLinearGradient(0, regularBtnY, 0, regularBtnY + regularBtnH);
     if (isPressed) {
       grad.addColorStop(0, `rgba(${LANE_RGB[i]},0.4)`);
       grad.addColorStop(1, `rgba(${LANE_RGB[i]},0.15)`);
@@ -1813,29 +2330,302 @@ function renderLaneButtons() {
       grad.addColorStop(1, 'rgba(255,255,255,0.02)');
     }
     ctx.fillStyle = grad;
-    ctx.fillRect(x, btnY, laneW, btnH);
+    ctx.fillRect(x, regularBtnY, laneW, regularBtnH);
 
     ctx.strokeStyle = isPressed ? LANE_COLORS[i] : 'rgba(255,255,255,0.1)';
     ctx.lineWidth = isPressed ? 2 : 1;
-    ctx.strokeRect(x, btnY, laneW, btnH);
+    ctx.strokeRect(x, regularBtnY, laneW, regularBtnH);
 
     const scale = isPressed ? 0.92 : 1;
 
     ctx.fillStyle = isPressed ? LANE_COLORS[i] : 'rgba(255,255,255,0.35)';
-    ctx.font = `bold ${W * 0.035 * scale}px sans-serif`;
+    ctx.font = `bold ${W * 0.04 * scale}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(LANE_LABELS[i], x + laneW / 2, btnY + btnH * 0.5);
+    ctx.fillText(LANE_LABELS[i], x + laneW / 2, regularBtnY + regularBtnH * 0.5);
 
     if (laneHolds[i]) {
       ctx.fillStyle = LANE_COLORS[i];
       ctx.globalAlpha = 0.3 + Math.sin(songTime * 10) * 0.15;
-      ctx.fillRect(x, btnY, laneW, btnH);
+      ctx.fillRect(x, regularBtnY, laneW, regularBtnH);
       ctx.globalAlpha = 1;
     }
 
     ctx.restore();
   }
+
+  // Keyboard hint on desktop (small text)
+  ctx.save();
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = '#fff';
+  ctx.font = `${W * 0.02}px sans-serif`;
+  ctx.textAlign = 'center';
+  const kbY = regularBtnY + regularBtnH - W * 0.03;
+  ctx.fillText('D', laneW * 0.5, kbY);
+  ctx.fillText('F', laneW * 1.5, kbY);
+  ctx.fillText('J', laneW * 2.5, kbY);
+  if (swordEnergy >= MAX_ENERGY) {
+    ctx.fillText('Space/K', W / 2, btnY + ultBtnH - W * 0.02);
+  }
+  ctx.restore();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SWORD ENERGY (剑气) INDICATOR
+// ══════════════════════════════════════════════════════════════════════════════
+
+function renderSwordEnergyIndicator() {
+  const cx = W / 2;
+  const indicatorY = safeTop + H * 0.1;
+  const swordSize = W * 0.06;
+  const swordGap = W * 0.025;
+  const totalWidth = MAX_ENERGY * swordSize + (MAX_ENERGY - 1) * swordGap;
+  const startX = cx - totalWidth / 2;
+
+  ctx.save();
+
+  // Label
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = `${W * 0.025}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('剑 气', cx, indicatorY - swordSize * 0.7);
+
+  for (let i = 0; i < MAX_ENERGY; i++) {
+    const sx = startX + i * (swordSize + swordGap);
+    const sy = indicatorY;
+    const filled = i < swordEnergy;
+
+    ctx.save();
+    ctx.translate(sx + swordSize / 2, sy);
+
+    if (filled) {
+      // Filled sword: glowing gold, pulsing
+      const pulse = swordEnergy >= MAX_ENERGY ? 1 + Math.sin(energyPulseTimer + i * 0.5) * 0.15 : 1;
+      ctx.scale(pulse, pulse);
+
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = swordEnergy >= MAX_ENERGY ? 15 + Math.sin(energyPulseTimer + i) * 8 : 8;
+
+      // Sword shape (simplified diamond/blade)
+      ctx.beginPath();
+      ctx.moveTo(0, -swordSize * 0.45);
+      ctx.lineTo(swordSize * 0.2, -swordSize * 0.1);
+      ctx.lineTo(swordSize * 0.08, swordSize * 0.1);
+      ctx.lineTo(swordSize * 0.15, swordSize * 0.45);
+      ctx.lineTo(0, swordSize * 0.35);
+      ctx.lineTo(-swordSize * 0.15, swordSize * 0.45);
+      ctx.lineTo(-swordSize * 0.08, swordSize * 0.1);
+      ctx.lineTo(-swordSize * 0.2, -swordSize * 0.1);
+      ctx.closePath();
+
+      const swordGrad = ctx.createLinearGradient(0, -swordSize * 0.45, 0, swordSize * 0.45);
+      swordGrad.addColorStop(0, '#FFF8DC');
+      swordGrad.addColorStop(0.5, '#FFD700');
+      swordGrad.addColorStop(1, '#B8860B');
+      ctx.fillStyle = swordGrad;
+      ctx.fill();
+
+      // Emit particles when all full
+      if (swordEnergy >= MAX_ENERGY && Math.random() < 0.05) {
+        particles.emit(sx + swordSize / 2, sy, {
+          count: 1,
+          color: '#FFD700',
+          speed: 30,
+          life: 0.5,
+          size: 2,
+          gravity: -20,
+        });
+      }
+    } else {
+      // Empty sword: dark grey
+      ctx.beginPath();
+      ctx.moveTo(0, -swordSize * 0.45);
+      ctx.lineTo(swordSize * 0.2, -swordSize * 0.1);
+      ctx.lineTo(swordSize * 0.08, swordSize * 0.1);
+      ctx.lineTo(swordSize * 0.15, swordSize * 0.45);
+      ctx.lineTo(0, swordSize * 0.35);
+      ctx.lineTo(-swordSize * 0.15, swordSize * 0.45);
+      ctx.lineTo(-swordSize * 0.08, swordSize * 0.1);
+      ctx.lineTo(-swordSize * 0.2, -swordSize * 0.1);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  // Energy count text
+  ctx.fillStyle = swordEnergy >= MAX_ENERGY ? '#FFD700' : 'rgba(255,255,255,0.6)';
+  ctx.font = `bold ${W * 0.03}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${swordEnergy}/${MAX_ENERGY}`, cx, indicatorY + swordSize * 0.7);
+
+  // "青莲剑歌" flash text when full
+  if (swordEnergy >= MAX_ENERGY) {
+    const flashAlpha = 0.6 + Math.sin(energyPulseTimer * 2) * 0.4;
+    ctx.globalAlpha = flashAlpha;
+    ctx.fillStyle = '#FFD700';
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 12;
+    ctx.font = `bold ${W * 0.035}px sans-serif`;
+    ctx.fillText('青莲剑歌 就绪!', cx, indicatorY + swordSize * 1.1);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GOLD BORDER GLOW (when energy is full)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function renderGoldBorder() {
+  if (goldBorderGlow <= 0) return;
+
+  ctx.save();
+  const borderWidth = W * 0.015;
+  const alpha = goldBorderGlow * 0.6;
+
+  // Top
+  const grad1 = ctx.createLinearGradient(0, 0, 0, borderWidth * 3);
+  grad1.addColorStop(0, `rgba(${ULT_RGB},${alpha})`);
+  grad1.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad1;
+  ctx.fillRect(0, 0, W, borderWidth * 3);
+
+  // Bottom
+  const grad2 = ctx.createLinearGradient(0, H, 0, H - borderWidth * 3);
+  grad2.addColorStop(0, `rgba(${ULT_RGB},${alpha})`);
+  grad2.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad2;
+  ctx.fillRect(0, H - borderWidth * 3, W, borderWidth * 3);
+
+  // Left
+  const grad3 = ctx.createLinearGradient(0, 0, borderWidth * 3, 0);
+  grad3.addColorStop(0, `rgba(${ULT_RGB},${alpha})`);
+  grad3.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad3;
+  ctx.fillRect(0, 0, borderWidth * 3, H);
+
+  // Right
+  const grad4 = ctx.createLinearGradient(W, 0, W - borderWidth * 3, 0);
+  grad4.addColorStop(0, `rgba(${ULT_RGB},${alpha})`);
+  grad4.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad4;
+  ctx.fillRect(W - borderWidth * 3, 0, borderWidth * 3, H);
+
+  ctx.restore();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ULTIMATE EFFECT (screen-wide sword slash)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function renderUltEffect() {
+  if (ultVisualTimer <= 0) return;
+
+  const progress = 1 - ultVisualTimer / ULT_VISUAL_DURATION;
+  ctx.save();
+
+  // Screen flash gold
+  if (progress < 0.15) {
+    const flashAlpha = (0.15 - progress) / 0.15 * 0.6;
+    ctx.fillStyle = `rgba(${ULT_RGB},${flashAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Diagonal sword slash lines
+  for (const slash of ultSlashLines) {
+    const slashProgress = Math.max(0, (progress - slash.delay) / 0.3);
+    if (slashProgress <= 0 || slashProgress > 1.5) continue;
+
+    const drawProgress = Math.min(1, slashProgress);
+    const fadeOut = slashProgress > 1 ? 1 - (slashProgress - 1) / 0.5 : 1;
+
+    ctx.save();
+    ctx.globalAlpha = fadeOut * 0.9;
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 4 + (1 - drawProgress) * 8;
+    ctx.shadowColor = '#FFF';
+    ctx.shadowBlur = 25;
+
+    ctx.beginPath();
+    const x1 = slash.x1;
+    const y1 = slash.y1;
+    const x2 = x1 + (slash.x2 - x1) * drawProgress;
+    const y2 = y1 + (slash.y2 - y1) * drawProgress;
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+
+    // White core line
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // Large "青莲剑歌" text in center
+  if (progress > 0.1 && progress < 0.9) {
+    const textAlpha = progress < 0.3 ? (progress - 0.1) / 0.2
+      : progress > 0.7 ? (0.9 - progress) / 0.2 : 1;
+    const textScale = 1 + (1 - Math.min(1, (progress - 0.1) / 0.2)) * 0.5;
+
+    ctx.save();
+    ctx.globalAlpha = textAlpha * 0.9;
+    ctx.translate(W / 2, H * 0.4);
+    ctx.scale(textScale, textScale);
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#FFD700';
+    ctx.font = `bold ${W * 0.14}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('青莲剑歌', 0, 0);
+
+    // White outline
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeText('青莲剑歌', 0, 0);
+
+    ctx.restore();
+  }
+
+  // Li Bai avatar flash in center
+  const avatar = getAvatarImage(LIBAI);
+  if (avatar && progress > 0.05 && progress < 0.6) {
+    const avatarAlpha = progress < 0.15 ? (progress - 0.05) / 0.1
+      : progress > 0.4 ? (0.6 - progress) / 0.2 : 0.5;
+    const avatarSize = W * 0.35;
+    ctx.save();
+    ctx.globalAlpha = avatarAlpha * 0.4;
+    ctx.drawImage(avatar, W / 2 - avatarSize / 2, H * 0.2, avatarSize, avatarSize);
+    ctx.restore();
+  }
+
+  // "Auto" indicator while ult is scoring
+  if (ultActive) {
+    ctx.globalAlpha = 0.6 + Math.sin(songTime * 8) * 0.3;
+    ctx.fillStyle = '#FFD700';
+    ctx.font = `bold ${W * 0.04}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`\u2694 自动斩击中... ${ultTimer.toFixed(1)}s`, W / 2, H * 0.6);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
 }
 
 function renderHUD() {
@@ -1850,11 +2640,12 @@ function renderHUD() {
   ctx.fillText(formatScore(score), W - W * 0.03, safeTop + H * 0.015);
   ctx.restore();
 
-  // Combo (top center)
+  // Combo (between energy indicator and playfield)
   if (combo > 0) {
     ctx.save();
     const scale = comboScale;
-    ctx.translate(cx, H * 0.06);
+    const comboY = safeTop + H * 0.22;
+    ctx.translate(cx, comboY);
     ctx.scale(scale, scale);
 
     if (combo >= 50) {
@@ -1866,15 +2657,15 @@ function renderHUD() {
     }
 
     ctx.fillStyle = combo >= 50 ? '#FFD700' : combo >= 30 ? '#D4A84B' : '#fff';
-    ctx.font = `bold ${W * 0.1}px sans-serif`;
+    ctx.font = `bold ${W * 0.09}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(combo.toString(), 0, 0);
 
     ctx.shadowBlur = 0;
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.font = `${W * 0.03}px sans-serif`;
-    ctx.fillText('COMBO', 0, W * 0.06);
+    ctx.font = `${W * 0.025}px sans-serif`;
+    ctx.fillText('COMBO', 0, W * 0.05);
 
     ctx.restore();
   }
@@ -1927,9 +2718,22 @@ function renderHUD() {
     }
     ctx.restore();
   }
+
+  // Combo multiplier indicator
+  if (combo >= 10) {
+    const mult = getComboMult();
+    ctx.save();
+    ctx.fillStyle = mult >= 3 ? '#FFD700' : mult >= 2 ? '#D4A84B' : '#aaa';
+    ctx.font = `bold ${W * 0.025}px sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`x${mult}`, W - W * 0.03, safeTop + H * 0.055);
+    ctx.restore();
+  }
 }
 
 function renderEffects() {
+  // Sword flash on combo milestone
   if (swordFlashTimer > 0) {
     ctx.save();
     const progress = 1 - swordFlashTimer / 1.5;
@@ -1947,14 +2751,18 @@ function renderEffects() {
     ctx.lineTo(W + 20, slashY - 30);
     ctx.stroke();
 
-    ctx.shadowBlur = 15;
-    ctx.fillStyle = '#FFD700';
-    ctx.font = `bold ${W * 0.12}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.globalAlpha = alpha;
-    ctx.fillText('青莲剑歌', W / 2, H * 0.35);
+    ctx.restore();
+  }
 
+  // Slow-mo visual hint (brief white vignette)
+  if (slowMoTimer > 0) {
+    ctx.save();
+    const alpha = slowMoTimer / 0.15 * 0.15;
+    const grad = ctx.createRadialGradient(W / 2, H / 2, W * 0.3, W / 2, H / 2, W * 0.8);
+    grad.addColorStop(0, 'transparent');
+    grad.addColorStop(1, `rgba(255,255,255,${alpha})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
     ctx.restore();
   }
 }
@@ -1981,6 +2789,11 @@ function renderCountdown() {
   ctx.font = `${W * 0.04}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.fillText('准备!', W / 2, H * 0.55);
+
+  // Show lane hints during countdown
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.font = `${W * 0.028}px sans-serif`;
+  ctx.fillText('集齐4剑气，释放青莲剑歌!', W / 2, H * 0.62);
   ctx.restore();
 }
 
