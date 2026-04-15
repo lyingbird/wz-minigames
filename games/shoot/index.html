@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<title>马可波罗·枪林弹雨</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action:none;user-select:none;-webkit-user-select:none}
+#game{width:100%;height:100%;position:fixed;inset:0}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<script type="module">
+import{createCanvas,createGameLoop,createJoystick,createParticleSystem,createFloatingText,createPool,circleCollision,showOverlay,drawRoundRect,formatScore,COLORS}from'../../shared/engine.js';
+import{loadHeroList,preloadAvatars,getAvatarImage,GAME_HEROES}from'../../shared/heroes.js';
+import{initAudio}from'../../shared/audio.js';
+import{addScore,getLeaderboard,getPersonalBest}from'../../shared/leaderboard.js';
+import{getCurrentSeason}from'../../shared/season.js';
+
+const GAME_ID='shoot';
+const PI2=Math.PI*2;
+
+// ── Constants ──
+const PLAYER_RADIUS=30;
+const PLAYER_SPEED=250;
+const BULLET_SPEED=600;
+const BULLET_RADIUS=4;
+const FIRE_RATE=6; // shots per second
+const MAX_BULLETS=100;
+const MAX_ENEMIES=30;
+const MAX_ENEMY_BULLETS=50;
+const INVINCIBLE_TIME=1.5;
+const MAX_HP=3;
+const ULT_KILLS_NEEDED=30;
+const ULT_WAVES=3;
+const ULT_WAVE_DELAY=0.3;
+const ULT_BULLETS_PER_WAVE=36;
+
+// Enemy types
+const ET_MINION=0,ET_ASSASSIN=1,ET_TANK=2,ET_RANGED=3,ET_BOSS=4;
+
+const ENEMY_DEFS=[
+  {type:ET_MINION,name:'小兵',radius:12,speed:60,hp:1,pts:10,color:'#E74C3C',borderColor:'#C0392B',avatar:false},
+  {type:ET_ASSASSIN,name:'刺客',radius:15,speed:150,hp:1,pts:30,color:'#3498DB',borderColor:'#2980B9',avatar:true},
+  {type:ET_TANK,name:'坦克',radius:25,speed:40,hp:5,pts:80,color:'#27AE60',borderColor:'#1E8449',avatar:true},
+  {type:ET_RANGED,name:'远程',radius:15,speed:50,hp:2,pts:50,color:'#9B59B6',borderColor:'#7D3C98',avatar:true},
+  {type:ET_BOSS,name:'Boss',radius:40,speed:30,hp:20,pts:500,color:'#D4A84B',borderColor:'#F1C40F',avatar:true}
+];
+
+// Hero avatars for enemy types
+const ENEMY_HEROES={
+  [ET_ASSASSIN]:GAME_HEROES.HANXIN||150,
+  [ET_TANK]:GAME_HEROES.LIANPO||105,
+  [ET_RANGED]:GAME_HEROES.ANQILA||142,
+  [ET_BOSS]:GAME_HEROES.SUNWUKONG||167
+};
+
+// ── State Machine ──
+const State={LOADING:0,TITLE:1,COUNTDOWN:2,PLAYING:3,DYING:4,GAMEOVER:5};
+let state=State.LOADING;
+let screen,ctx,W,H;
+let audio=null;
+let moveJoystick,aimJoystick;
+let particles,floatingText;
+
+// Player
+let px,py,hp;
+let invincible=false,invTimer=0;
+let playerFlash=0;
+
+// Shooting
+let fireTimer=0;
+let shotCount=0; // for audio throttling
+
+// Combo
+let comboKills=0,comboMultiplier=1;
+
+// Ultimate
+let ultEnergy=0,ultReady=false;
+let ultActive=false,ultTimer=0,ultWavesFired=0,ultGlow=0;
+let ultButtonPulse=0;
+
+// Game
+let gameTime=0,score=0,totalKills=0,maxCombo=0;
+let countdownVal=3,countdownTimer=0;
+let dyingTimer=0;
+let screenFlash=0;
+let screenTint=0; // gold tint for ult
+
+// ── Pools ──
+const bulletPool=createPool(
+  ()=>({x:0,y:0,vx:0,vy:0,active:false,isUlt:false,trail:[]}),
+  (b)=>{b.active=false;b.isUlt=false;b.trail.length=0;},
+  MAX_BULLETS
+);
+
+const enemyPool=createPool(
+  ()=>({x:0,y:0,vx:0,vy:0,type:0,hp:0,maxHp:0,radius:0,speed:0,pts:0,
+        color:'',borderColor:'',active:false,fireTimer:0,hasAvatar:false,
+        hitFlash:0,spawnAnim:0}),
+  (e)=>{e.active=false;e.fireTimer=0;e.hitFlash=0;e.spawnAnim=0;},
+  MAX_ENEMIES
+);
+
+const enemyBulletPool=createPool(
+  ()=>({x:0,y:0,vx:0,vy:0,active:false,trail:[]}),
+  (b)=>{b.active=false;b.trail.length=0;},
+  MAX_ENEMY_BULLETS
+);
+
+// Spawn tracking
+let spawnAccum=0;
+
+// ── Arena background cache ──
+let bgCanvas=null;
+
+function createBgPattern(w,h){
+  bgCanvas=document.createElement('canvas');
+  bgCanvas.width=w;
+  bgCanvas.height=h;
+  const bgCtx=bgCanvas.getContext('2d');
+
+  // Dark fill
+  bgCtx.fillStyle='#0d0d1f';
+  bgCtx.fillRect(0,0,w,h);
+
+  // Circular grid
+  const cx=w/2,cy=h/2;
+  bgCtx.strokeStyle='rgba(212,168,75,0.06)';
+  bgCtx.lineWidth=1;
+  for(let r=50;r<Math.max(w,h);r+=60){
+    bgCtx.beginPath();
+    bgCtx.arc(cx,cy,r,0,PI2);
+    bgCtx.stroke();
+  }
+  // Radial lines
+  for(let a=0;a<PI2;a+=Math.PI/8){
+    bgCtx.beginPath();
+    bgCtx.moveTo(cx,cy);
+    bgCtx.lineTo(cx+Math.cos(a)*Math.max(w,h),cy+Math.sin(a)*Math.max(w,h));
+    bgCtx.stroke();
+  }
+
+  // Vignette
+  const grad=bgCtx.createRadialGradient(cx,cy,Math.min(w,h)*0.3,cx,cy,Math.max(w,h)*0.7);
+  grad.addColorStop(0,'rgba(0,0,0,0)');
+  grad.addColorStop(1,'rgba(0,0,0,0.5)');
+  bgCtx.fillStyle=grad;
+  bgCtx.fillRect(0,0,w,h);
+}
+
+// ── Init ──
+async function init(){
+  screen=createCanvas(document.getElementById('game'));
+  ({ctx,width:W,height:H}=screen);
+
+  const ro=new ResizeObserver(()=>{
+    W=screen.width;H=screen.height;
+    createBgPattern(W,H);
+  });
+  ro.observe(screen.canvas);
+  createBgPattern(W,H);
+
+  moveJoystick=createJoystick({side:'left',radius:55,deadzone:8});
+  moveJoystick.attach(screen.canvas);
+
+  aimJoystick=createJoystick({side:'right',radius:55,deadzone:8});
+  aimJoystick.attach(screen.canvas);
+
+  // Tap detection for title/gameover/ult — using touchstart on canvas
+  screen.canvas.addEventListener('touchstart',(e)=>{
+    for(let i=0;i<e.changedTouches.length;i++){
+      const t=e.changedTouches[i];
+      const rect=screen.canvas.getBoundingClientRect();
+      const tx=t.clientX-rect.left;
+      const ty=t.clientY-rect.top;
+      handleTap(tx,ty);
+    }
+  },{passive:true});
+
+  particles=createParticleSystem(500);
+  floatingText=createFloatingText();
+
+  await loadHeroList();
+  await preloadAvatars([
+    GAME_HEROES.MARKOPOLO||132,
+    ENEMY_HEROES[ET_ASSASSIN],
+    ENEMY_HEROES[ET_TANK],
+    ENEMY_HEROES[ET_RANGED],
+    ENEMY_HEROES[ET_BOSS]
+  ]);
+
+  const loop=createGameLoop(update,render);
+  loop.start();
+  state=State.TITLE;
+}
+
+function handleTap(tx,ty){
+  W=screen.width;H=screen.height;
+  if(state===State.TITLE||state===State.GAMEOVER){
+    startGame();
+  }else if(state===State.PLAYING&&ultReady&&!ultActive){
+    // Check if tap is near the ult button area (bottom center)
+    const btnX=W/2,btnY=H-70;
+    const dx=tx-btnX,dy=ty-btnY;
+    if(dx*dx+dy*dy<50*50){
+      activateUlt();
+    }
+  }
+}
+
+function startGame(){
+  if(!audio) audio=initAudio();
+  state=State.COUNTDOWN;
+  countdownVal=3;
+  countdownTimer=0;
+  audio.playCountdown();
+  resetGame();
+}
+
+function resetGame(){
+  W=screen.width;H=screen.height;
+  px=W/2;py=H/2;
+  hp=MAX_HP;
+  invincible=false;invTimer=0;playerFlash=0;
+  fireTimer=0;shotCount=0;
+  comboKills=0;comboMultiplier=1;
+  ultEnergy=0;ultReady=false;ultActive=false;ultTimer=0;ultWavesFired=0;ultGlow=0;
+  ultButtonPulse=0;
+  gameTime=0;score=0;totalKills=0;maxCombo=0;
+  spawnAccum=0;
+  screenFlash=0;screenTint=0;
+  dyingTimer=0;
+  bulletPool.releaseAll();
+  enemyPool.releaseAll();
+  enemyBulletPool.releaseAll();
+  particles.clear();
+  floatingText.clear();
+}
+
+// ── Ultimate ──
+function activateUlt(){
+  ultActive=true;
+  ultTimer=0;
+  ultWavesFired=0;
+  ultEnergy=0;
+  ultReady=false;
+  ultGlow=1;
+  screenTint=0.4;
+  if(audio) audio.playDash();
+}
+
+function fireUltWave(){
+  const angleStep=PI2/ULT_BULLETS_PER_WAVE;
+  for(let i=0;i<ULT_BULLETS_PER_WAVE;i++){
+    if(bulletPool.activeCount>=MAX_BULLETS) break;
+    const a=angleStep*i;
+    const b=bulletPool.get();
+    b.x=px;b.y=py;
+    b.vx=Math.cos(a)*BULLET_SPEED;
+    b.vy=Math.sin(a)*BULLET_SPEED;
+    b.active=true;
+    b.isUlt=true;
+  }
+  if(audio) audio.playShoot();
+}
+
+// ── Shooting ──
+function fireBullet(angle){
+  if(bulletPool.activeCount>=MAX_BULLETS) return;
+  const b=bulletPool.get();
+  b.x=px;b.y=py;
+  b.vx=Math.cos(angle)*BULLET_SPEED;
+  b.vy=Math.sin(angle)*BULLET_SPEED;
+  b.active=true;
+  b.isUlt=false;
+  shotCount++;
+  if(audio&&shotCount%3===0) audio.playShoot();
+}
+
+// ── Enemy Spawning ──
+function spawnEnemy(type){
+  if(enemyPool.activeCount>=MAX_ENEMIES) return;
+  const def=ENEMY_DEFS[type];
+  const e=enemyPool.get();
+
+  // Spawn from random edge
+  const edge=Math.floor(Math.random()*4);
+  const margin=def.radius+10;
+  switch(edge){
+    case 0: e.x=Math.random()*W;e.y=-margin;break; // top
+    case 1: e.x=W+margin;e.y=Math.random()*H;break; // right
+    case 2: e.x=Math.random()*W;e.y=H+margin;break; // bottom
+    case 3: e.x=-margin;e.y=Math.random()*H;break; // left
+  }
+
+  e.type=type;
+  e.hp=def.hp;
+  e.maxHp=def.hp;
+  e.radius=def.radius;
+  e.speed=def.speed;
+  e.pts=def.pts;
+  e.color=def.color;
+  e.borderColor=def.borderColor;
+  e.active=true;
+  e.hasAvatar=def.avatar;
+  e.fireTimer=Math.random()*1; // stagger first shot
+  e.hitFlash=0;
+  e.spawnAnim=0.3;
+}
+
+function getSpawnableTypes(t){
+  const types=[ET_MINION];
+  if(t>=20) types.push(ET_ASSASSIN);
+  if(t>=30) types.push(ET_RANGED);
+  if(t>=40) types.push(ET_TANK);
+  return types;
+}
+
+// ── Enemy fires ──
+function enemyFireAt(ex,ey,targetX,targetY){
+  if(enemyBulletPool.activeCount>=MAX_ENEMY_BULLETS) return;
+  const dx=targetX-ex,dy=targetY-ey;
+  const d=Math.sqrt(dx*dx+dy*dy)||1;
+  const b=enemyBulletPool.get();
+  b.x=ex;b.y=ey;
+  b.vx=(dx/d)*200;
+  b.vy=(dy/d)*200;
+  b.active=true;
+}
+
+function enemyFireSpread(ex,ey,targetX,targetY){
+  const dx=targetX-ex,dy=targetY-ey;
+  const baseAngle=Math.atan2(dy,dx);
+  for(let i=-1;i<=1;i++){
+    if(enemyBulletPool.activeCount>=MAX_ENEMY_BULLETS) break;
+    const a=baseAngle+i*0.25;
+    const b=enemyBulletPool.get();
+    b.x=ex;b.y=ey;
+    b.vx=Math.cos(a)*200;
+    b.vy=Math.sin(a)*200;
+    b.active=true;
+  }
+}
+
+// ── Damage Player ──
+function damagePlayer(){
+  if(invincible) return;
+  hp--;
+  comboKills=0;
+  comboMultiplier=1;
+  invincible=true;
+  invTimer=INVINCIBLE_TIME;
+  screenFlash=0.3;
+  if(audio) audio.playDeath();
+  particles.emit(px,py,{count:15,speed:150,color:'#E74C3C',size:5,life:0.6});
+  if(hp<=0){
+    state=State.DYING;
+    dyingTimer=1.5;
+    particles.emit(px,py,{count:30,speed:200,color:COLORS.GOLD,size:6,life:1});
+  }
+}
+
+// ── Kill Enemy ──
+function killEnemy(e){
+  e.active=false;
+  const mult=comboMultiplier;
+  const pts=e.pts*mult;
+  score+=pts;
+  totalKills++;
+  comboKills++;
+  comboMultiplier=Math.min(5,Math.floor(comboKills/5)+1);
+  if(comboMultiplier>maxCombo) maxCombo=comboMultiplier;
+
+  // Ult energy
+  if(!ultActive&&!ultReady){
+    ultEnergy=Math.min(ULT_KILLS_NEEDED,ultEnergy+1);
+    if(ultEnergy>=ULT_KILLS_NEEDED) ultReady=true;
+  }
+
+  // Effects
+  particles.emit(e.x,e.y,{count:12,speed:120,color:e.color,size:4,life:0.5});
+  const ptsTxt=mult>1?`${pts} x${mult}`:`+${pts}`;
+  const txtColor=mult>=3?'#F1C40F':mult>=2?'#F0D78C':COLORS.GOLD;
+  floatingText.add(e.x,e.y-e.radius,ptsTxt,{color:txtColor,size:mult>=3?22:18});
+  if(audio){
+    audio.playHit();
+    if(comboKills>0&&comboKills%5===0) audio.playCombo(comboMultiplier);
+  }
+
+  enemyPool.release(e);
+}
+
+// ── Update ──
+function update(dt){
+  W=screen.width;H=screen.height;
+  particles.update(dt);
+  floatingText.update(dt);
+
+  if(state===State.COUNTDOWN){
+    countdownTimer+=dt;
+    if(countdownTimer>=1){
+      countdownTimer-=1;
+      countdownVal--;
+      if(countdownVal<=0){
+        state=State.PLAYING;
+        if(audio) audio.playStart();
+      }else{
+        if(audio) audio.playCountdown();
+      }
+    }
+    return;
+  }
+
+  if(state===State.DYING){
+    dyingTimer-=dt;
+    if(dyingTimer<=0){
+      state=State.GAMEOVER;
+      addScore(GAME_ID,score,GAME_HEROES.MARKOPOLO||132,'马可波罗');
+    }
+    return;
+  }
+
+  if(state!==State.PLAYING) return;
+
+  gameTime+=dt;
+
+  // ── Screen tint fade ──
+  if(screenTint>0) screenTint=Math.max(0,screenTint-dt*0.5);
+  if(screenFlash>0) screenFlash=Math.max(0,screenFlash-dt);
+
+  // ── Ult button pulse ──
+  if(ultReady&&!ultActive){
+    ultButtonPulse+=dt*3;
+  }
+
+  // ── Ultimate ──
+  if(ultActive){
+    ultTimer+=dt;
+    ultGlow=Math.max(0,ultGlow-dt*0.5);
+    const wavesNeeded=Math.floor(ultTimer/ULT_WAVE_DELAY);
+    while(ultWavesFired<wavesNeeded&&ultWavesFired<ULT_WAVES){
+      fireUltWave();
+      ultWavesFired++;
+    }
+    if(ultWavesFired>=ULT_WAVES&&ultTimer>ULT_WAVES*ULT_WAVE_DELAY+0.5){
+      ultActive=false;
+    }
+  }
+
+  // ── Player movement ──
+  const ms=moveJoystick.state;
+  if(ms.active&&ms.magnitude>0){
+    px+=ms.x*PLAYER_SPEED*ms.magnitude*dt;
+    py+=ms.y*PLAYER_SPEED*ms.magnitude*dt;
+  }
+  // Clamp
+  px=Math.max(PLAYER_RADIUS,Math.min(W-PLAYER_RADIUS,px));
+  py=Math.max(PLAYER_RADIUS,Math.min(H-PLAYER_RADIUS,py));
+
+  // ── Invincibility ──
+  if(invincible){
+    invTimer-=dt;
+    playerFlash+=dt*10;
+    if(invTimer<=0){
+      invincible=false;
+      playerFlash=0;
+    }
+  }
+
+  // ── Shooting ──
+  const as=aimJoystick.state;
+  if(as.active&&as.magnitude>0){
+    fireTimer+=dt;
+    const interval=1/FIRE_RATE;
+    while(fireTimer>=interval){
+      fireTimer-=interval;
+      fireBullet(as.angle);
+    }
+  }else{
+    fireTimer=0;
+  }
+
+  // ── Update player bullets ──
+  bulletPool.forEach((b)=>{
+    if(!b.active) return;
+    b.x+=b.vx*dt;
+    b.y+=b.vy*dt;
+    // Trail
+    b.trail.push({x:b.x,y:b.y});
+    if(b.trail.length>5) b.trail.shift();
+    // Off screen
+    if(b.x<-20||b.x>W+20||b.y<-20||b.y>H+20){
+      b.active=false;
+      bulletPool.release(b);
+      return;
+    }
+    // Hit enemy
+    let hit=false;
+    enemyPool.forEach((e)=>{
+      if(!e.active||hit) return;
+      if(circleCollision(b.x,b.y,BULLET_RADIUS,e.x,e.y,e.radius)){
+        hit=true;
+        const dmg=b.isUlt?2:1;
+        e.hp-=dmg;
+        e.hitFlash=0.1;
+        if(e.hp<=0){
+          killEnemy(e);
+        }else{
+          particles.emit(b.x,b.y,{count:3,speed:60,color:COLORS.GOLD,size:2,life:0.2});
+        }
+      }
+    });
+    if(hit){
+      b.active=false;
+      bulletPool.release(b);
+    }
+  });
+
+  // ── Enemy spawning ──
+  const spawnRate=0.5+gameTime*0.05;
+  spawnAccum+=dt*spawnRate;
+  while(spawnAccum>=1){
+    spawnAccum-=1;
+    const types=getSpawnableTypes(gameTime);
+    const pick=types[Math.floor(Math.random()*types.length)];
+    spawnEnemy(pick);
+  }
+  // Boss every 60s
+  if(gameTime>0&&Math.floor(gameTime)%60===0&&Math.floor(gameTime-dt)%60!==0){
+    spawnEnemy(ET_BOSS);
+  }
+
+  // ── Update enemies ──
+  enemyPool.forEach((e)=>{
+    if(!e.active) return;
+    e.spawnAnim=Math.max(0,e.spawnAnim-dt);
+    e.hitFlash=Math.max(0,e.hitFlash-dt);
+
+    const dx=px-e.x,dy=py-e.y;
+    const dist=Math.sqrt(dx*dx+dy*dy)||1;
+
+    if(e.type===ET_RANGED){
+      // Stay ~200px from player
+      if(dist>220){
+        e.x+=(dx/dist)*e.speed*dt;
+        e.y+=(dy/dist)*e.speed*dt;
+      }else if(dist<180){
+        e.x-=(dx/dist)*e.speed*dt;
+        e.y-=(dy/dist)*e.speed*dt;
+      }
+      // Fire
+      e.fireTimer+=dt;
+      if(e.fireTimer>=2){
+        e.fireTimer=0;
+        enemyFireAt(e.x,e.y,px,py);
+      }
+    }else if(e.type===ET_BOSS){
+      e.x+=(dx/dist)*e.speed*dt;
+      e.y+=(dy/dist)*e.speed*dt;
+      e.fireTimer+=dt;
+      if(e.fireTimer>=1.5){
+        e.fireTimer=0;
+        enemyFireSpread(e.x,e.y,px,py);
+      }
+    }else{
+      // Move toward player
+      e.x+=(dx/dist)*e.speed*dt;
+      e.y+=(dy/dist)*e.speed*dt;
+    }
+
+    // Collision with player
+    if(!invincible&&circleCollision(px,py,PLAYER_RADIUS,e.x,e.y,e.radius)){
+      damagePlayer();
+      // Minions & assassins die on contact
+      if(e.type===ET_MINION||e.type===ET_ASSASSIN){
+        e.active=false;
+        particles.emit(e.x,e.y,{count:6,speed:80,color:e.color,size:3,life:0.3});
+        enemyPool.release(e);
+      }
+    }
+  });
+
+  // ── Update enemy bullets ──
+  enemyBulletPool.forEach((b)=>{
+    if(!b.active) return;
+    b.x+=b.vx*dt;
+    b.y+=b.vy*dt;
+    b.trail.push({x:b.x,y:b.y});
+    if(b.trail.length>4) b.trail.shift();
+    // Off screen
+    if(b.x<-20||b.x>W+20||b.y<-20||b.y>H+20){
+      b.active=false;
+      enemyBulletPool.release(b);
+      return;
+    }
+    // Hit player
+    if(!invincible&&circleCollision(b.x,b.y,5,px,py,PLAYER_RADIUS)){
+      damagePlayer();
+      b.active=false;
+      enemyBulletPool.release(b);
+    }
+  });
+}
+
+// ── Render ──
+function render(){
+  W=screen.width;H=screen.height;
+  ctx.clearRect(0,0,W,H);
+
+  // Background
+  if(bgCanvas) ctx.drawImage(bgCanvas,0,0,W,H);
+
+  if(state===State.TITLE){
+    renderTitle();
+    return;
+  }
+
+  if(state===State.GAMEOVER){
+    renderGameplay();
+    renderGameOver();
+    return;
+  }
+
+  if(state===State.COUNTDOWN){
+    renderCountdown();
+    return;
+  }
+
+  if(state===State.DYING||state===State.PLAYING){
+    renderGameplay();
+  }
+}
+
+function renderGameplay(){
+  // ── Gold tint overlay for ult ──
+  if(screenTint>0){
+    ctx.save();
+    ctx.globalAlpha=screenTint*0.3;
+    ctx.fillStyle='#D4A84B';
+    ctx.fillRect(0,0,W,H);
+    ctx.restore();
+  }
+
+  // ── Player bullets ──
+  bulletPool.forEach((b)=>{
+    if(!b.active) return;
+    // Trail
+    ctx.save();
+    if(b.trail.length>1){
+      for(let i=0;i<b.trail.length-1;i++){
+        const alpha=(i/(b.trail.length-1))*0.4;
+        ctx.globalAlpha=alpha;
+        ctx.beginPath();
+        ctx.arc(b.trail[i].x,b.trail[i].y,b.isUlt?3:2,0,PI2);
+        ctx.fillStyle=b.isUlt?'#F1C40F':'#D4A84B';
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha=1;
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,b.isUlt?5:BULLET_RADIUS,0,PI2);
+    ctx.fillStyle=b.isUlt?'#F1C40F':'#D4A84B';
+    ctx.fill();
+    // Glow
+    ctx.shadowColor=b.isUlt?'#F1C40F':'#D4A84B';
+    ctx.shadowBlur=b.isUlt?8:4;
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,b.isUlt?5:BULLET_RADIUS,0,PI2);
+    ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.restore();
+  });
+
+  // ── Enemy bullets ──
+  enemyBulletPool.forEach((b)=>{
+    if(!b.active) return;
+    ctx.save();
+    if(b.trail.length>1){
+      for(let i=0;i<b.trail.length-1;i++){
+        const alpha=(i/(b.trail.length-1))*0.3;
+        ctx.globalAlpha=alpha;
+        ctx.beginPath();
+        ctx.arc(b.trail[i].x,b.trail[i].y,3,0,PI2);
+        ctx.fillStyle='#E74C3C';
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha=1;
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,5,0,PI2);
+    ctx.fillStyle='#E74C3C';
+    ctx.fill();
+    ctx.shadowColor='#E74C3C';
+    ctx.shadowBlur=5;
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,5,0,PI2);
+    ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.restore();
+  });
+
+  // ── Enemies ──
+  enemyPool.forEach((e)=>{
+    if(!e.active) return;
+    const scale=e.spawnAnim>0?1+(e.spawnAnim/0.3)*0.5:1;
+    const r=e.radius*scale;
+
+    ctx.save();
+    ctx.translate(e.x,e.y);
+
+    // Boss: gold border glow
+    if(e.type===ET_BOSS){
+      ctx.shadowColor='#F1C40F';
+      ctx.shadowBlur=15;
+    }
+
+    // Body
+    ctx.beginPath();
+    ctx.arc(0,0,r,0,PI2);
+    if(e.hitFlash>0){
+      ctx.fillStyle='#fff';
+    }else{
+      ctx.fillStyle=e.color;
+    }
+    ctx.fill();
+
+    // Border
+    ctx.lineWidth=e.type===ET_BOSS?3:2;
+    ctx.strokeStyle=e.type===ET_BOSS?'#F1C40F':e.borderColor;
+    ctx.stroke();
+    ctx.shadowBlur=0;
+
+    // Avatar
+    if(e.hasAvatar){
+      const heroId=ENEMY_HEROES[e.type];
+      const img=heroId?getAvatarImage(heroId):null;
+      if(img){
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0,0,r-2,0,PI2);
+        ctx.clip();
+        ctx.drawImage(img,-r,-r,r*2,r*2);
+        if(e.hitFlash>0){
+          ctx.globalAlpha=0.5;
+          ctx.fillStyle='#fff';
+          ctx.fillRect(-r,-r,r*2,r*2);
+        }
+        ctx.restore();
+      }
+    }
+
+    ctx.restore();
+
+    // HP bar for tanks and bosses
+    if((e.type===ET_TANK||e.type===ET_BOSS)&&e.hp<e.maxHp){
+      const barW=e.radius*2;
+      const barH=4;
+      const bx=e.x-barW/2;
+      const by=e.y-e.radius-10;
+      ctx.fillStyle='rgba(0,0,0,0.5)';
+      ctx.fillRect(bx,by,barW,barH);
+      const pct=e.hp/e.maxHp;
+      ctx.fillStyle=pct>0.5?'#27AE60':pct>0.25?'#F39C12':'#E74C3C';
+      ctx.fillRect(bx,by,barW*pct,barH);
+      ctx.strokeStyle='rgba(255,255,255,0.3)';
+      ctx.lineWidth=0.5;
+      ctx.strokeRect(bx,by,barW,barH);
+    }
+  });
+
+  // ── Player ──
+  if(state!==State.DYING||(state===State.DYING&&Math.sin(dyingTimer*20)>0)){
+    const showPlayer=!invincible||Math.sin(playerFlash*Math.PI)>0;
+    if(showPlayer){
+      ctx.save();
+      ctx.translate(px,py);
+
+      // Ult glow
+      if(ultActive||ultGlow>0){
+        ctx.save();
+        ctx.globalAlpha=(ultActive?0.4:ultGlow*0.4);
+        ctx.beginPath();
+        ctx.arc(0,0,PLAYER_RADIUS+15,0,PI2);
+        ctx.fillStyle='#D4A84B';
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Gold glow
+      ctx.shadowColor='#D4A84B';
+      ctx.shadowBlur=10;
+
+      // Body circle
+      ctx.beginPath();
+      ctx.arc(0,0,PLAYER_RADIUS,0,PI2);
+      ctx.fillStyle='#1A1A2E';
+      ctx.fill();
+      ctx.lineWidth=3;
+      ctx.strokeStyle=COLORS.GOLD;
+      ctx.stroke();
+      ctx.shadowBlur=0;
+
+      // Avatar
+      const marcoImg=getAvatarImage(GAME_HEROES.MARKOPOLO||132);
+      if(marcoImg){
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0,0,PLAYER_RADIUS-2,0,PI2);
+        ctx.clip();
+        ctx.drawImage(marcoImg,-PLAYER_RADIUS,-PLAYER_RADIUS,PLAYER_RADIUS*2,PLAYER_RADIUS*2);
+        ctx.restore();
+      }
+
+      // Aim direction indicator
+      if(aimJoystick.state.active&&aimJoystick.state.magnitude>0){
+        const a=aimJoystick.state.angle;
+        ctx.save();
+        ctx.globalAlpha=0.5;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(a)*(PLAYER_RADIUS+5),Math.sin(a)*(PLAYER_RADIUS+5));
+        ctx.lineTo(Math.cos(a)*(PLAYER_RADIUS+15),Math.sin(a)*(PLAYER_RADIUS+15));
+        ctx.lineWidth=3;
+        ctx.strokeStyle=COLORS.GOLD;
+        ctx.lineCap='round';
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.restore();
+    }
+  }
+
+  // ── Particles & Floating Text ──
+  particles.render(ctx);
+  floatingText.render(ctx);
+
+  // ── HUD ──
+  renderHUD();
+
+  // ── Screen flash ──
+  if(screenFlash>0){
+    ctx.save();
+    ctx.globalAlpha=screenFlash;
+    ctx.fillStyle='#E74C3C';
+    ctx.fillRect(0,0,W,H);
+    ctx.restore();
+  }
+
+  // ── Joysticks ──
+  moveJoystick.render(ctx);
+  aimJoystick.render(ctx);
+}
+
+function renderHUD(){
+  ctx.save();
+
+  // Score — top left
+  ctx.font='bold 24px sans-serif';
+  ctx.textAlign='left';
+  ctx.textBaseline='top';
+  ctx.lineWidth=3;
+  ctx.strokeStyle='#000';
+  ctx.strokeText(formatScore(score),15,15);
+  ctx.fillStyle=COLORS.GOLD;
+  ctx.fillText(formatScore(score),15,15);
+
+  // Time
+  ctx.font='14px sans-serif';
+  ctx.fillStyle='#aaa';
+  const mins=Math.floor(gameTime/60);
+  const secs=Math.floor(gameTime%60);
+  ctx.fillText(`${mins}:${secs<10?'0':''}${secs}`,15,44);
+
+  // Combo — top center
+  if(comboMultiplier>1){
+    ctx.textAlign='center';
+    ctx.textBaseline='top';
+    const comboSize=24+comboMultiplier*3;
+    ctx.font=`bold ${comboSize}px sans-serif`;
+    const comboColor=comboMultiplier>=5?'#F1C40F':comboMultiplier>=3?'#F0D78C':COLORS.GOLD;
+    ctx.lineWidth=3;
+    ctx.strokeStyle='#000';
+    ctx.strokeText(`${comboMultiplier}x COMBO`,W/2,15);
+    ctx.fillStyle=comboColor;
+    ctx.fillText(`${comboMultiplier}x COMBO`,W/2,15);
+  }
+
+  // Hearts — top right
+  ctx.textAlign='right';
+  ctx.textBaseline='top';
+  ctx.font='22px sans-serif';
+  for(let i=0;i<MAX_HP;i++){
+    const hx=W-15-i*28;
+    const hy=15;
+    ctx.fillStyle=i<hp?'#E74C3C':'#333';
+    ctx.fillText('❤',hx,hy);
+  }
+
+  // Energy bar — bottom center
+  const barW=160,barH=12;
+  const barX=W/2-barW/2;
+  const barY=H-40;
+  const pct=ultEnergy/ULT_KILLS_NEEDED;
+
+  // Background
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  drawRoundRect(ctx,barX,barY,barW,barH,6);
+  ctx.fill();
+
+  // Fill
+  if(pct>0){
+    ctx.save();
+    ctx.beginPath();
+    drawRoundRect(ctx,barX,barY,barW*pct,barH,6);
+    ctx.clip();
+    ctx.fillStyle=ultReady?'#F1C40F':'#D4A84B';
+    ctx.fillRect(barX,barY,barW*pct,barH);
+    ctx.restore();
+  }
+
+  // Border
+  ctx.strokeStyle=ultReady?'#F1C40F':'rgba(212,168,75,0.5)';
+  ctx.lineWidth=1;
+  drawRoundRect(ctx,barX,barY,barW,barH,6);
+  ctx.stroke();
+
+  // Label
+  ctx.font='10px sans-serif';
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.fillStyle='#fff';
+  ctx.fillText(ultReady?'华丽左轮 就绪!':'华丽左轮',W/2,barY+barH/2);
+
+  // Ult button when ready
+  if(ultReady&&!ultActive){
+    const btnR=30+Math.sin(ultButtonPulse)*4;
+    const btnX=W/2,btnY=H-70;
+    ctx.save();
+    ctx.shadowColor='#F1C40F';
+    ctx.shadowBlur=15+Math.sin(ultButtonPulse)*5;
+    ctx.beginPath();
+    ctx.arc(btnX,btnY,btnR,0,PI2);
+    ctx.fillStyle='#D4A84B';
+    ctx.fill();
+    ctx.lineWidth=2;
+    ctx.strokeStyle='#F1C40F';
+    ctx.stroke();
+    ctx.shadowBlur=0;
+    ctx.font='bold 12px sans-serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillStyle='#1A1A2E';
+    ctx.fillText('大招',btnX,btnY);
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function renderTitle(){
+  showOverlay(ctx,W,H,{alpha:0.85});
+
+  ctx.save();
+  const cy=H/2;
+
+  // Avatar
+  const marcoImg=getAvatarImage(GAME_HEROES.MARKOPOLO||132);
+  if(marcoImg){
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(W/2,cy-80,45,0,PI2);
+    ctx.clip();
+    ctx.drawImage(marcoImg,W/2-45,cy-125,90,90);
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(W/2,cy-80,45,0,PI2);
+    ctx.lineWidth=3;
+    ctx.strokeStyle=COLORS.GOLD;
+    ctx.stroke();
+  }
+
+  // Title
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.font='bold 28px sans-serif';
+  ctx.lineWidth=3;
+  ctx.strokeStyle='#000';
+  ctx.strokeText('马可波罗·枪林弹雨',W/2,cy);
+  ctx.fillStyle=COLORS.GOLD;
+  ctx.fillText('马可波罗·枪林弹雨',W/2,cy);
+
+  // Subtitle
+  ctx.font='14px sans-serif';
+  ctx.fillStyle='#aaa';
+  ctx.fillText('双摇杆射击生存',W/2,cy+30);
+
+  // Personal best
+  const pb=getPersonalBest(GAME_ID);
+  if(pb>0){
+    ctx.font='16px sans-serif';
+    ctx.fillStyle='#F0D78C';
+    ctx.fillText(`最佳纪录: ${formatScore(pb)}`,W/2,cy+60);
+  }
+
+  // Start
+  const pulse=0.6+Math.sin(performance.now()/500)*0.4;
+  ctx.globalAlpha=pulse;
+  ctx.font='bold 20px sans-serif';
+  ctx.fillStyle='#fff';
+  ctx.fillText('点击开始',W/2,cy+100);
+  ctx.globalAlpha=1;
+
+  ctx.restore();
+}
+
+function renderCountdown(){
+  // Draw arena background
+  if(bgCanvas) ctx.drawImage(bgCanvas,0,0,W,H);
+
+  // Player standing still
+  ctx.save();
+  ctx.translate(px,py);
+  ctx.beginPath();
+  ctx.arc(0,0,PLAYER_RADIUS,0,PI2);
+  ctx.fillStyle='#1A1A2E';
+  ctx.fill();
+  ctx.lineWidth=3;
+  ctx.strokeStyle=COLORS.GOLD;
+  ctx.stroke();
+  const marcoImg=getAvatarImage(GAME_HEROES.MARKOPOLO||132);
+  if(marcoImg){
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0,0,PLAYER_RADIUS-2,0,PI2);
+    ctx.clip();
+    ctx.drawImage(marcoImg,-PLAYER_RADIUS,-PLAYER_RADIUS,PLAYER_RADIUS*2,PLAYER_RADIUS*2);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // Number
+  const scale=1+countdownTimer*0.5;
+  const alpha=1-countdownTimer;
+  ctx.save();
+  ctx.globalAlpha=Math.max(0,alpha);
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.font=`bold ${Math.round(72*scale)}px sans-serif`;
+  ctx.lineWidth=4;
+  ctx.strokeStyle='#000';
+  ctx.strokeText(countdownVal,W/2,H/2);
+  ctx.fillStyle=COLORS.GOLD;
+  ctx.fillText(countdownVal,W/2,H/2);
+  ctx.restore();
+}
+
+function renderGameOver(){
+  ctx.save();
+  ctx.globalAlpha=0.8;
+  ctx.fillStyle='#1A1A2E';
+  ctx.fillRect(0,0,W,H);
+  ctx.globalAlpha=1;
+
+  const cx=W/2;
+  let y=H*0.12;
+
+  // Title
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.font='bold 30px sans-serif';
+  ctx.lineWidth=3;
+  ctx.strokeStyle='#000';
+  ctx.strokeText('游戏结束',cx,y);
+  ctx.fillStyle='#E74C3C';
+  ctx.fillText('游戏结束',cx,y);
+  y+=45;
+
+  // Score
+  ctx.font='bold 36px sans-serif';
+  ctx.strokeText(formatScore(score),cx,y);
+  ctx.fillStyle=COLORS.GOLD;
+  ctx.fillText(formatScore(score),cx,y);
+  y+=35;
+
+  // Stats
+  ctx.font='16px sans-serif';
+  ctx.fillStyle='#ccc';
+  const mins=Math.floor(gameTime/60);
+  const secs=Math.floor(gameTime%60);
+  ctx.fillText(`存活 ${mins}:${secs<10?'0':''}${secs}  |  击杀 ${totalKills}  |  最高连击 ${maxCombo}x`,cx,y);
+  y+=40;
+
+  // Leaderboard
+  const lb=getLeaderboard(GAME_ID);
+  if(lb&&lb.length>0){
+    ctx.font='bold 16px sans-serif';
+    ctx.fillStyle=COLORS.GOLD;
+    ctx.fillText('排行榜',cx,y);
+    y+=25;
+    ctx.font='14px sans-serif';
+    const top5=lb.slice(0,5);
+    for(let i=0;i<top5.length;i++){
+      const entry=top5[i];
+      const name=entry.name||'玩家';
+      ctx.fillStyle=i===0?'#F1C40F':i===1?'#C0C0C0':i===2?'#CD7F32':'#aaa';
+      ctx.fillText(`${i+1}. ${name} — ${formatScore(entry.score)}`,cx,y);
+      y+=22;
+    }
+  }
+
+  y+=20;
+  // Retry
+  const pulse=0.6+Math.sin(performance.now()/500)*0.4;
+  ctx.globalAlpha=pulse;
+  ctx.font='bold 20px sans-serif';
+  ctx.fillStyle='#fff';
+  ctx.fillText('点击重新开始',cx,y);
+  ctx.globalAlpha=1;
+
+  ctx.restore();
+}
+
+// ── Boot ──
+init();
+</script>
+</body>
+</html>

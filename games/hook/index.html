@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<title>钟馗·黄金矿工</title>
+<link rel="stylesheet" href="../../shared/styles.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action:none;user-select:none;-webkit-user-select:none}
+#game{width:100%;height:100%;position:fixed;inset:0}
+</style>
+</head>
+<body>
+<div id="game"></div>
+<script type="module">
+import{createCanvas,createGameLoop,createTapDetector,createParticleSystem,createFloatingText,circleCollision,lineCircleCollision,showOverlay,drawRoundRect,formatScore,COLORS}from'../../shared/engine.js';
+import{loadHeroList,getHeroById,getRandomHeroes,preloadAvatars,getAvatarImage,GAME_HEROES,HERO_TYPES}from'../../shared/heroes.js';
+import{initAudio}from'../../shared/audio.js';
+import{addScore,getLeaderboard,getPersonalBest}from'../../shared/leaderboard.js';
+import{getCurrentSeason}from'../../shared/season.js';
+
+// ═══════════════════════════════════════════════════════════
+// Constants
+// ═══════════════════════════════════════════════════════════
+const GAME_ID = 'hook';
+const TOTAL_ROUNDS = 3;
+const ROUND_TIME = 30;
+const COUNTDOWN_TIME = 3;
+
+// Hook physics
+const SWING_SPEED = 1.8;        // radians/sec
+const SWING_ARC = Math.PI * 0.35; // ~63 degrees each side
+const HOOK_EXTEND_SPEED_BASE = 450; // px/sec
+const HOOK_RETRACT_EMPTY = 500;
+const HOOK_TIP_RADIUS = 8;
+
+// Target types
+const T_MINION = 0;
+const T_MARKSMAN = 1;
+const T_MAGE = 2;
+const T_WARRIOR = 3;
+const T_ASSASSIN = 4;
+const T_TANK = 5;
+const T_TREASURE = 6;
+const T_BOMB = 7;
+
+const TARGET_DEFS = {
+  [T_MINION]:   { radius: 14, score: 10,  weight: 0.2, retractMul: 1.0,  label: '小兵' },
+  [T_MARKSMAN]: { radius: 26, score: 30,  weight: 0.5, retractMul: 0.75, label: '射手' },
+  [T_MAGE]:     { radius: 26, score: 30,  weight: 0.5, retractMul: 0.75, label: '法师' },
+  [T_WARRIOR]:  { radius: 28, score: 50,  weight: 0.7, retractMul: 0.5,  label: '战士' },
+  [T_ASSASSIN]: { radius: 26, score: 50,  weight: 0.6, retractMul: 0.55, label: '刺客' },
+  [T_TANK]:     { radius: 34, score: 100, weight: 1.0, retractMul: 0.25, label: '坦克' },
+  [T_TREASURE]: { radius: 20, score: 0,   weight: 0.3, retractMul: 0.9,  label: '宝箱' },
+  [T_BOMB]:     { radius: 22, score:-200, weight: 0.3, retractMul: 0.8,  label: '炸弹' },
+};
+
+// Hero type to target type mapping
+const HERO_TYPE_MAP = { 5: T_MARKSMAN, 2: T_MAGE, 1: T_WARRIOR, 4: T_ASSASSIN, 3: T_TANK, 6: T_WARRIOR };
+
+// Colors
+const COL_GOLD = '#D4A84B';
+const COL_LIGHT_GOLD = '#F0D78C';
+const COL_DARK = '#1A1A2E';
+const COL_RED = '#E74C3C';
+const COL_BG_TOP = '#0a0a1a';
+const COL_BG_BOT = '#141428';
+
+// ═══════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════
+const Phase = { LOADING: 0, TITLE: 1, COUNTDOWN: 2, PLAYING: 3, ROUND_END: 4, GAMEOVER: 5 };
+let phase = Phase.LOADING;
+
+let screen, ctx, W, H;
+let audio = null;
+let tapDetector;
+let particles, floatingText;
+let season;
+
+// Hook state
+let hookPivotX, hookPivotY;
+let hookAngle = 0;        // current swing angle (0 = straight down)
+let hookSwingDir = 1;      // 1 = swinging right, -1 = left
+let hookState = 'swing';   // 'swing' | 'extending' | 'retracting'
+let hookLength = 0;
+let hookMaxLength = 0;
+let hookExtendAngle = 0;   // angle locked when launched
+let hookTipX = 0, hookTipY = 0;
+let hookRetractSpeed = 0;
+let hookedTarget = null;
+
+// Game state
+let score = 0;
+let currentRound = 1;
+let roundTimer = ROUND_TIME;
+let countdownTimer = 0;
+let countdownVal = 3;
+let roundEndTimer = 0;
+let bonusTimeAdded = 0;
+
+// Targets
+let targets = [];
+
+// Preloaded hero data
+let heroPool = [];
+let tankHeroes = [];
+let otherHeroes = [];
+
+// Title screen
+let titlePulse = 0;
+let bestScore = null;
+
+// Game over
+let finalScore = 0;
+let isNewRecord = false;
+let leaderboard = [];
+
+// Zhong Kui avatar
+let zhongkuiImg = null;
+
+// ═══════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════
+async function init() {
+  screen = createCanvas(document.getElementById('game'));
+  ({ ctx, width: W, height: H } = screen);
+
+  const ro = new ResizeObserver(() => { W = screen.width; H = screen.height; });
+  ro.observe(screen.canvas);
+
+  particles = createParticleSystem(300);
+  floatingText = createFloatingText();
+
+  tapDetector = createTapDetector(screen.canvas);
+  tapDetector.onTap = handleTap;
+
+  // Also support mouse click for desktop testing
+  screen.canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+      const rect = screen.canvas.getBoundingClientRect();
+      handleTap(e.clientX - rect.left, e.clientY - rect.top);
+    }
+  });
+
+  // Load data
+  season = getCurrentSeason();
+  await loadHeroList();
+
+  // Build hero pools for targets
+  const allTargetIds = [
+    GAME_HEROES.DAJI, GAME_HEROES.ZHAOYUN, GAME_HEROES.LUBAN,
+    GAME_HEROES.HANXIN, GAME_HEROES.YASE, GAME_HEROES.ANQILA,
+    GAME_HEROES.SUNWUKONG, GAME_HEROES.ZHUANGZHOU, GAME_HEROES.LIANPO,
+    GAME_HEROES.GONGSUNLI
+  ];
+
+  // Preload all needed avatars
+  await preloadAvatars([GAME_HEROES.ZHONGKUI, ...allTargetIds]);
+  zhongkuiImg = getAvatarImage(GAME_HEROES.ZHONGKUI);
+
+  // Categorize heroes by type for spawning
+  for (const eid of allTargetIds) {
+    const hero = await getHeroById(eid);
+    if (!hero) continue;
+    const ttype = HERO_TYPE_MAP[hero.hero_type] || T_WARRIOR;
+    const entry = { ename: eid, cname: hero.cname, ttype };
+    if (ttype === T_TANK) tankHeroes.push(entry);
+    else otherHeroes.push(entry);
+    heroPool.push(entry);
+  }
+
+  bestScore = getPersonalBest(GAME_ID);
+
+  // Start
+  phase = Phase.TITLE;
+  const loop = createGameLoop(update, render);
+  loop.start();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Input
+// ═══════════════════════════════════════════════════════════
+function handleTap(x, y) {
+  W = screen.width; H = screen.height;
+
+  if (phase === Phase.TITLE || phase === Phase.GAMEOVER) {
+    startGame();
+    return;
+  }
+  if (phase === Phase.PLAYING && hookState === 'swing') {
+    launchHook();
+  }
+}
+
+function initAudioOnce() {
+  if (!audio) {
+    try { audio = initAudio(); } catch(e) { console.warn('Audio init failed', e); }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Game flow
+// ═══════════════════════════════════════════════════════════
+function startGame() {
+  initAudioOnce();
+  if (audio) audio.playStart();
+
+  score = 0;
+  currentRound = 1;
+  phase = Phase.COUNTDOWN;
+  countdownVal = 3;
+  countdownTimer = 0;
+  targets = [];
+  resetHook();
+  prepareRound();
+}
+
+function prepareRound() {
+  targets = [];
+  roundTimer = ROUND_TIME;
+  bonusTimeAdded = 0;
+  resetHook();
+  spawnTargetsForRound(currentRound);
+}
+
+function resetHook() {
+  hookPivotX = W / 2;
+  hookPivotY = H * 0.22;
+  hookAngle = 0;
+  hookSwingDir = 1;
+  hookState = 'swing';
+  hookLength = 0;
+  hookMaxLength = H * 0.75;
+  hookedTarget = null;
+}
+
+function launchHook() {
+  if (hookState !== 'swing') return;
+  hookState = 'extending';
+  hookExtendAngle = hookAngle;
+  hookLength = 0;
+  hookedTarget = null;
+  if (audio) audio.playHook();
+}
+
+function startNextRound() {
+  currentRound++;
+  if (currentRound > TOTAL_ROUNDS) {
+    endGame();
+    return;
+  }
+  phase = Phase.COUNTDOWN;
+  countdownVal = 3;
+  countdownTimer = 0;
+  prepareRound();
+}
+
+function endGame() {
+  phase = Phase.GAMEOVER;
+  finalScore = score;
+  const result = addScore(GAME_ID, finalScore, GAME_HEROES.ZHONGKUI, '玩家');
+  isNewRecord = result.rank === 1;
+  leaderboard = getLeaderboard(GAME_ID).slice(0, 5);
+  bestScore = getPersonalBest(GAME_ID);
+  if (audio) { isNewRecord ? audio.playCombo(8) : audio.playDeath(); }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Target Spawning
+// ═══════════════════════════════════════════════════════════
+function spawnTargetsForRound(round) {
+  const speedMod = season.modifiers?.speedMultiplier || 1;
+  const lanes = [
+    { y: H * 0.38, speedBase: 40 * speedMod },
+    { y: H * 0.52, speedBase: 55 * speedMod },
+    { y: H * 0.66, speedBase: 35 * speedMod },
+    { y: H * 0.80, speedBase: 25 * speedMod },
+  ];
+
+  // Round difficulty scaling
+  let minionCount, heroCount, bombCount, treasureCount, tankCount;
+  if (round === 1) {
+    minionCount = 8; heroCount = 4; bombCount = 0; treasureCount = 1; tankCount = 0;
+  } else if (round === 2) {
+    minionCount = 6; heroCount = 6; bombCount = 2; treasureCount = 1; tankCount = 1;
+  } else {
+    minionCount = 4; heroCount = 7; bombCount = 3; treasureCount = 2; tankCount = 2;
+  }
+
+  const roundSpeedScale = 1 + (round - 1) * 0.25;
+
+  // Spawn minions
+  for (let i = 0; i < minionCount; i++) {
+    const lane = lanes[Math.floor(Math.random() * lanes.length)];
+    targets.push(createMinion(lane, roundSpeedScale));
+  }
+
+  // Spawn heroes
+  const shuffledHeroes = [...otherHeroes].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < heroCount; i++) {
+    const hero = shuffledHeroes[i % shuffledHeroes.length];
+    const lane = lanes[Math.floor(Math.random() * lanes.length)];
+    targets.push(createHeroTarget(hero, lane, roundSpeedScale));
+  }
+
+  // Spawn tanks
+  const shuffledTanks = [...tankHeroes].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < tankCount; i++) {
+    const hero = shuffledTanks[i % Math.max(1, shuffledTanks.length)];
+    const deepLane = lanes[2 + Math.floor(Math.random() * 2)]; // deeper lanes
+    targets.push(createHeroTarget(hero || shuffledHeroes[0], deepLane, roundSpeedScale, true));
+  }
+
+  // Spawn bombs
+  for (let i = 0; i < bombCount; i++) {
+    const lane = lanes[Math.floor(Math.random() * lanes.length)];
+    targets.push(createBomb(lane, roundSpeedScale));
+  }
+
+  // Spawn treasure
+  for (let i = 0; i < treasureCount; i++) {
+    const lane = lanes[1 + Math.floor(Math.random() * 2)];
+    targets.push(createTreasure(lane, roundSpeedScale));
+  }
+}
+
+function createMinion(lane, speedScale) {
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  return {
+    type: T_MINION,
+    x: dir > 0 ? -20 + Math.random() * W * 0.8 : W + 20 - Math.random() * W * 0.8,
+    y: lane.y + (Math.random() - 0.5) * 30,
+    vx: dir * (lane.speedBase + Math.random() * 30) * speedScale,
+    radius: TARGET_DEFS[T_MINION].radius,
+    ename: null,
+    color: randomMinionColor(),
+    alive: true,
+    pulse: Math.random() * Math.PI * 2,
+  };
+}
+
+function createHeroTarget(hero, lane, speedScale, forceTank = false) {
+  const ttype = forceTank ? T_TANK : hero.ttype;
+  const def = TARGET_DEFS[ttype];
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  return {
+    type: ttype,
+    x: dir > 0 ? -30 + Math.random() * W * 0.7 : W + 30 - Math.random() * W * 0.7,
+    y: lane.y + (Math.random() - 0.5) * 25,
+    vx: dir * (lane.speedBase * (ttype === T_TANK ? 0.5 : 0.7) + Math.random() * 20) * speedScale,
+    radius: def.radius,
+    ename: hero.ename,
+    cname: hero.cname,
+    color: null,
+    alive: true,
+    pulse: Math.random() * Math.PI * 2,
+  };
+}
+
+function createBomb(lane, speedScale) {
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  return {
+    type: T_BOMB,
+    x: dir > 0 ? Math.random() * W * 0.6 : W - Math.random() * W * 0.6,
+    y: lane.y + (Math.random() - 0.5) * 20,
+    vx: dir * (lane.speedBase * 0.8 + Math.random() * 25) * speedScale,
+    radius: TARGET_DEFS[T_BOMB].radius,
+    ename: null,
+    color: COL_RED,
+    alive: true,
+    pulse: Math.random() * Math.PI * 2,
+  };
+}
+
+function createTreasure(lane, speedScale) {
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  return {
+    type: T_TREASURE,
+    x: dir > 0 ? Math.random() * W * 0.5 : W * 0.5 + Math.random() * W * 0.5,
+    y: lane.y + (Math.random() - 0.5) * 20,
+    vx: dir * (lane.speedBase * 0.6 + Math.random() * 15) * speedScale,
+    radius: TARGET_DEFS[T_TREASURE].radius,
+    ename: null,
+    color: '#FFD700',
+    alive: true,
+    pulse: Math.random() * Math.PI * 2,
+  };
+}
+
+function randomMinionColor() {
+  const colors = ['#7B68EE', '#5BC0EB', '#9ACD32', '#DDA0DD', '#87CEEB', '#F0E68C'];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
+// ═══════════════════════════════════════════════════════════
+// Update
+// ═══════════════════════════════════════════════════════════
+function update(dt) {
+  W = screen.width; H = screen.height;
+  hookPivotX = W / 2;
+  hookPivotY = H * 0.22;
+  hookMaxLength = H * 0.75;
+
+  particles.update(dt);
+  floatingText.update(dt);
+
+  switch (phase) {
+    case Phase.TITLE:
+      titlePulse += dt * 2;
+      updateHookSwing(dt);
+      break;
+
+    case Phase.COUNTDOWN:
+      countdownTimer += dt;
+      if (countdownTimer >= 1) {
+        countdownTimer -= 1;
+        countdownVal--;
+        if (audio) audio.playCountdown();
+        if (countdownVal <= 0) {
+          phase = Phase.PLAYING;
+          if (audio) audio.playStart();
+        }
+      }
+      updateHookSwing(dt);
+      break;
+
+    case Phase.PLAYING:
+      updatePlaying(dt);
+      break;
+
+    case Phase.ROUND_END:
+      roundEndTimer += dt;
+      if (roundEndTimer >= 2.5) {
+        startNextRound();
+      }
+      break;
+
+    case Phase.GAMEOVER:
+      titlePulse += dt * 2;
+      break;
+  }
+}
+
+function updatePlaying(dt) {
+  // Timer
+  roundTimer -= dt;
+  if (roundTimer <= 0) {
+    roundTimer = 0;
+    // End round
+    phase = Phase.ROUND_END;
+    roundEndTimer = 0;
+    resetHook();
+    return;
+  }
+
+  // Update targets
+  for (const t of targets) {
+    if (!t.alive) continue;
+    if (t === hookedTarget) continue; // hooked targets don't move on their own
+    t.x += t.vx * dt;
+    t.pulse += dt * 3;
+
+    // Wrap/bounce
+    if (t.x < -t.radius * 2) t.x = W + t.radius;
+    else if (t.x > W + t.radius * 2) t.x = -t.radius;
+  }
+
+  // Update hook
+  switch (hookState) {
+    case 'swing':
+      updateHookSwing(dt);
+      break;
+
+    case 'extending':
+      hookLength += HOOK_EXTEND_SPEED_BASE * dt;
+      updateHookTip();
+
+      // Check collision with targets
+      for (const t of targets) {
+        if (!t.alive) continue;
+        if (circleCollision(hookTipX, hookTipY, HOOK_TIP_RADIUS, t.x, t.y, t.radius)) {
+          // Hooked!
+          hookedTarget = t;
+          hookState = 'retracting';
+          const def = TARGET_DEFS[t.type];
+          hookRetractSpeed = HOOK_RETRACT_EMPTY * def.retractMul;
+          if (audio) audio.playHit();
+          break;
+        }
+      }
+
+      // Max length or off screen
+      if (hookLength >= hookMaxLength || hookTipY > H + 10 || hookTipX < -20 || hookTipX > W + 20) {
+        hookState = 'retracting';
+        hookRetractSpeed = HOOK_RETRACT_EMPTY;
+        hookedTarget = null;
+      }
+      break;
+
+    case 'retracting':
+      const retractAmount = (hookedTarget ? hookRetractSpeed : HOOK_RETRACT_EMPTY) * dt;
+      hookLength -= retractAmount;
+
+      if (hookedTarget) {
+        updateHookTip();
+        hookedTarget.x = hookTipX;
+        hookedTarget.y = hookTipY;
+      }
+
+      if (hookLength <= 0) {
+        hookLength = 0;
+        hookState = 'swing';
+
+        // Process hooked target
+        if (hookedTarget) {
+          processCapture(hookedTarget);
+          hookedTarget = null;
+        }
+      }
+      break;
+  }
+}
+
+function updateHookSwing(dt) {
+  hookAngle += hookSwingDir * SWING_SPEED * dt;
+  if (hookAngle > SWING_ARC) { hookAngle = SWING_ARC; hookSwingDir = -1; }
+  if (hookAngle < -SWING_ARC) { hookAngle = -SWING_ARC; hookSwingDir = 1; }
+}
+
+function updateHookTip() {
+  // Angle: 0 = straight down, positive = right
+  const angle = hookExtendAngle + Math.PI / 2; // convert so 0 = down
+  hookTipX = hookPivotX + Math.cos(angle) * hookLength;
+  hookTipY = hookPivotY + Math.sin(angle) * hookLength;
+}
+
+function processCapture(target) {
+  const def = TARGET_DEFS[target.type];
+  const scoreMod = season.modifiers?.scoreMultiplier || 1;
+
+  if (target.type === T_BOMB) {
+    // Bomb penalty
+    const pts = Math.round(def.score * scoreMod);
+    score = Math.max(0, score + pts);
+    floatingText.add(hookPivotX, hookPivotY + 20, `${pts}`, { color: COL_RED, size: 28, duration: 1.2 });
+    particles.emit(hookPivotX, hookPivotY, { count: 15, speed: 150, color: COL_RED, size: 5, life: 0.6 });
+    if (audio) audio.playDeath();
+  } else if (target.type === T_TREASURE) {
+    // Bonus time
+    const bonus = 5;
+    roundTimer += bonus;
+    bonusTimeAdded += bonus;
+    floatingText.add(hookPivotX, hookPivotY + 20, `+${bonus}秒!`, { color: '#00FF88', size: 28, duration: 1.5 });
+    particles.emit(hookPivotX, hookPivotY, { count: 20, speed: 120, color: '#FFD700', size: 4, life: 0.8 });
+    if (audio) audio.playScore();
+  } else {
+    // Score points
+    const pts = Math.round(def.score * scoreMod);
+    score += pts;
+    floatingText.add(hookPivotX, hookPivotY + 20, `+${pts}`, { color: COL_GOLD, size: 26, duration: 1 });
+    particles.emit(hookPivotX, hookPivotY, { count: 12, speed: 100, color: COL_GOLD, size: 4, life: 0.7 });
+    if (audio) audio.playScore();
+  }
+
+  target.alive = false;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Render
+// ═══════════════════════════════════════════════════════════
+function render() {
+  W = screen.width; H = screen.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  drawBackground();
+
+  switch (phase) {
+    case Phase.LOADING:
+      drawLoadingScreen();
+      break;
+    case Phase.TITLE:
+      drawTargetsPreview();
+      drawHook();
+      drawZhongKui();
+      drawTitleScreen();
+      break;
+    case Phase.COUNTDOWN:
+      drawTargets();
+      drawHook();
+      drawZhongKui();
+      drawHUD();
+      drawCountdown();
+      break;
+    case Phase.PLAYING:
+      drawTargets();
+      drawHook();
+      drawZhongKui();
+      drawHUD();
+      break;
+    case Phase.ROUND_END:
+      drawTargets();
+      drawZhongKui();
+      drawHUD();
+      drawRoundEnd();
+      break;
+    case Phase.GAMEOVER:
+      drawZhongKui();
+      drawGameOver();
+      break;
+  }
+
+  particles.render(ctx);
+  floatingText.render(ctx);
+}
+
+// ── Background ──
+function drawBackground() {
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, COL_BG_TOP);
+  grad.addColorStop(0.3, '#0e0e22');
+  grad.addColorStop(1, COL_BG_BOT);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Depth grid lines
+  ctx.save();
+  ctx.globalAlpha = 0.06;
+  ctx.strokeStyle = COL_GOLD;
+  ctx.lineWidth = 1;
+  const gridSpacing = 50;
+  for (let y = H * 0.3; y < H * 0.95; y += gridSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  for (let x = 0; x < W; x += gridSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(x, H * 0.3);
+    ctx.lineTo(x, H * 0.95);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Lane depth fog - subtle gradient bands
+  ctx.save();
+  ctx.globalAlpha = 0.03;
+  for (let i = 0; i < 4; i++) {
+    const ly = H * (0.35 + i * 0.15);
+    const bandGrad = ctx.createLinearGradient(0, ly - 20, 0, ly + 20);
+    bandGrad.addColorStop(0, 'transparent');
+    bandGrad.addColorStop(0.5, COL_GOLD);
+    bandGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = bandGrad;
+    ctx.fillRect(0, ly - 20, W, 40);
+  }
+  ctx.restore();
+}
+
+// ── Zhong Kui ──
+function drawZhongKui() {
+  const cx = W / 2;
+  const cy = H * 0.15;
+  const r = Math.min(W * 0.1, 40);
+
+  // Glow
+  ctx.save();
+  const glowGrad = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r * 2.5);
+  glowGrad.addColorStop(0, 'rgba(212, 168, 75, 0.25)');
+  glowGrad.addColorStop(1, 'transparent');
+  ctx.fillStyle = glowGrad;
+  ctx.fillRect(cx - r * 3, cy - r * 3, r * 6, r * 6);
+  ctx.restore();
+
+  // Avatar circle
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  if (zhongkuiImg) {
+    ctx.drawImage(zhongkuiImg, cx - r, cy - r, r * 2, r * 2);
+  } else {
+    ctx.fillStyle = '#6B3FA0';
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Border ring
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+  ctx.strokeStyle = COL_GOLD;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.restore();
+
+  // Name label below
+  ctx.save();
+  ctx.font = `bold ${Math.round(r * 0.4)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = COL_GOLD;
+  ctx.globalAlpha = 0.8;
+  ctx.fillText('钟馗', cx, cy + r + Math.round(r * 0.5));
+  ctx.restore();
+}
+
+// ── Hook ──
+function drawHook() {
+  let tipX, tipY, angle;
+
+  if (hookState === 'swing') {
+    // Show short dangling hook line
+    angle = hookAngle + Math.PI / 2;
+    const dangLen = 30;
+    tipX = hookPivotX + Math.cos(angle) * dangLen;
+    tipY = hookPivotY + Math.sin(angle) * dangLen;
+    drawChainLine(hookPivotX, hookPivotY, tipX, tipY);
+    drawHookClaw(tipX, tipY);
+  } else {
+    updateHookTip();
+    drawChainLine(hookPivotX, hookPivotY, hookTipX, hookTipY);
+    drawHookClaw(hookTipX, hookTipY);
+
+    // Draw hooked target being dragged
+    if (hookedTarget && hookState === 'retracting') {
+      drawSingleTarget(hookedTarget);
+    }
+  }
+}
+
+function drawChainLine(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1) return;
+
+  const segLen = 8;
+  const segments = Math.max(1, Math.floor(len / segLen));
+  const nx = dx / len;
+  const ny = dy / len;
+
+  ctx.save();
+
+  // Main chain line
+  ctx.strokeStyle = COL_GOLD;
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Chain links (small circles at intervals)
+  ctx.fillStyle = COL_LIGHT_GOLD;
+  const linkSpacing = 12;
+  const linkCount = Math.floor(len / linkSpacing);
+  for (let i = 1; i <= linkCount; i++) {
+    const t = i / (linkCount + 1);
+    const lx = x1 + dx * t;
+    const ly = y1 + dy * t;
+    ctx.beginPath();
+    ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawHookClaw(x, y) {
+  ctx.save();
+
+  // Claw body
+  ctx.beginPath();
+  ctx.arc(x, y, HOOK_TIP_RADIUS, 0, Math.PI * 2);
+  const clawGrad = ctx.createRadialGradient(x - 2, y - 2, 1, x, y, HOOK_TIP_RADIUS);
+  clawGrad.addColorStop(0, '#FFE4A0');
+  clawGrad.addColorStop(1, COL_GOLD);
+  ctx.fillStyle = clawGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#A88430';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Claw prongs
+  const prongs = 3;
+  const prongLen = 6;
+  // Point downward by default
+  let baseAngle;
+  if (hookState === 'swing') {
+    baseAngle = hookAngle + Math.PI / 2;
+  } else {
+    baseAngle = hookExtendAngle + Math.PI / 2;
+  }
+
+  ctx.strokeStyle = COL_GOLD;
+  ctx.lineWidth = 2;
+  for (let i = 0; i < prongs; i++) {
+    const a = baseAngle + (i - 1) * 0.4;
+    const px = x + Math.cos(a) * (HOOK_TIP_RADIUS + prongLen);
+    const py = y + Math.sin(a) * (HOOK_TIP_RADIUS + prongLen);
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(a) * HOOK_TIP_RADIUS, y + Math.sin(a) * HOOK_TIP_RADIUS);
+    ctx.lineTo(px, py);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ── Targets ──
+function drawTargets() {
+  for (const t of targets) {
+    if (!t.alive) continue;
+    if (t === hookedTarget && hookState === 'retracting') continue; // drawn by hook
+    drawSingleTarget(t);
+  }
+}
+
+function drawTargetsPreview() {
+  // Draw some dummy targets for the title screen
+  const time = titlePulse;
+  ctx.save();
+  ctx.globalAlpha = 0.3;
+  for (let i = 0; i < 5; i++) {
+    const x = (W * 0.2 + i * W * 0.15 + Math.sin(time + i) * 20) % W;
+    const y = H * 0.45 + i * 40;
+    ctx.beginPath();
+    ctx.arc(x, y, 15, 0, Math.PI * 2);
+    ctx.fillStyle = ['#7B68EE', '#5BC0EB', COL_GOLD, '#9ACD32', '#DDA0DD'][i];
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawSingleTarget(t) {
+  const def = TARGET_DEFS[t.type];
+  const pulseScale = 1 + Math.sin(t.pulse) * 0.05;
+  const r = t.radius * pulseScale;
+
+  ctx.save();
+
+  switch (t.type) {
+    case T_MINION:
+      // Simple colored circle with a face
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = t.color;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // Eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(t.x - r * 0.25, t.y - r * 0.15, r * 0.2, 0, Math.PI * 2);
+      ctx.arc(t.x + r * 0.25, t.y - r * 0.15, r * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#333';
+      ctx.beginPath();
+      ctx.arc(t.x - r * 0.25, t.y - r * 0.12, r * 0.1, 0, Math.PI * 2);
+      ctx.arc(t.x + r * 0.25, t.y - r * 0.12, r * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+      // Score label
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = `bold ${Math.round(r * 0.65)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(def.score, t.x, t.y + r * 0.45);
+      break;
+
+    case T_MARKSMAN:
+    case T_MAGE:
+    case T_WARRIOR:
+    case T_ASSASSIN:
+    case T_TANK: {
+      // Hero avatar in circle
+      const img = t.ename ? getAvatarImage(t.ename) : null;
+
+      // Glow for tanks
+      if (t.type === T_TANK) {
+        ctx.save();
+        ctx.shadowColor = '#FFD700';
+        ctx.shadowBlur = 15;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, r + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 215, 0, 0.5)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Clip avatar
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+      if (img) {
+        ctx.drawImage(img, t.x - r, t.y - r, r * 2, r * 2);
+      } else {
+        ctx.fillStyle = '#555';
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // Border color by type
+      const borderColors = {
+        [T_MARKSMAN]: '#3498DB',
+        [T_MAGE]:     '#9B59B6',
+        [T_WARRIOR]:  '#E67E22',
+        [T_ASSASSIN]: '#E74C3C',
+        [T_TANK]:     '#FFD700',
+      };
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r + 1.5, 0, Math.PI * 2);
+      ctx.strokeStyle = borderColors[t.type] || COL_GOLD;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      // Score badge
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      const badgeW = r * 1.2;
+      const badgeH = r * 0.5;
+      drawRoundRect(ctx, t.x - badgeW / 2, t.y + r + 2, badgeW, badgeH, 4);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.round(r * 0.35)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(def.score, t.x, t.y + r + 2 + badgeH / 2);
+      break;
+    }
+
+    case T_TREASURE:
+      // Golden sparkle circle
+      ctx.save();
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = 12 + Math.sin(t.pulse * 2) * 6;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
+      const treasGrad = ctx.createRadialGradient(t.x - r * 0.3, t.y - r * 0.3, 1, t.x, t.y, r);
+      treasGrad.addColorStop(0, '#FFF8DC');
+      treasGrad.addColorStop(0.6, '#FFD700');
+      treasGrad.addColorStop(1, '#B8860B');
+      ctx.fillStyle = treasGrad;
+      ctx.fill();
+      ctx.restore();
+      // Star/sparkle symbol
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.round(r * 0.9)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('+5s', t.x, t.y);
+      // Sparkle particles
+      ctx.save();
+      ctx.globalAlpha = 0.5 + Math.sin(t.pulse * 3) * 0.3;
+      for (let i = 0; i < 4; i++) {
+        const a = t.pulse + i * Math.PI / 2;
+        const sx = t.x + Math.cos(a) * (r + 5);
+        const sy = t.y + Math.sin(a) * (r + 5);
+        ctx.fillStyle = '#FFD700';
+        ctx.beginPath();
+        ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      break;
+
+    case T_BOMB:
+      // Red pulsing circle
+      ctx.save();
+      const bombPulse = 0.8 + Math.sin(t.pulse * 4) * 0.2;
+      ctx.shadowColor = COL_RED;
+      ctx.shadowBlur = 10 * bombPulse;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, r * bombPulse, 0, Math.PI * 2);
+      const bombGrad = ctx.createRadialGradient(t.x, t.y, 0, t.x, t.y, r);
+      bombGrad.addColorStop(0, '#FF6B6B');
+      bombGrad.addColorStop(0.7, COL_RED);
+      bombGrad.addColorStop(1, '#8B0000');
+      ctx.fillStyle = bombGrad;
+      ctx.fill();
+      ctx.restore();
+      // Lightning symbol
+      ctx.fillStyle = '#FFD700';
+      ctx.font = `bold ${Math.round(r * 1.1)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('\u26A1', t.x, t.y);
+      // Penalty label
+      ctx.fillStyle = COL_RED;
+      ctx.font = `bold ${Math.round(r * 0.45)}px sans-serif`;
+      ctx.fillText('-200', t.x, t.y + r + 10);
+      break;
+  }
+
+  ctx.restore();
+}
+
+// ── HUD ──
+function drawHUD() {
+  ctx.save();
+
+  const safeTop = 10;
+
+  // Score - top left
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillStyle = 'rgba(212,168,75,0.7)';
+  ctx.textAlign = 'left';
+  ctx.fillText('得分', 15, safeTop + 14);
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillStyle = '#FFD700';
+  ctx.textAlign = 'left';
+  ctx.shadowColor = 'rgba(255,215,0,0.4)';
+  ctx.shadowBlur = 8;
+  ctx.fillText(formatScore(score), 15, safeTop + 42);
+  ctx.shadowBlur = 0;
+
+  // Timer - top right
+  const timeLeft = Math.ceil(roundTimer);
+  const timerColor = timeLeft <= 5 ? COL_RED : COL_GOLD;
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillStyle = 'rgba(212,168,75,0.7)';
+  ctx.textAlign = 'right';
+  ctx.fillText('时间', W - 15, safeTop + 14);
+  ctx.font = `bold 32px sans-serif`;
+  ctx.fillStyle = timerColor;
+  ctx.textAlign = 'right';
+  if (timeLeft <= 5) {
+    ctx.shadowColor = 'rgba(231,76,60,0.6)';
+    ctx.shadowBlur = 10;
+  }
+  ctx.fillText(timeLeft + 's', W - 15, safeTop + 44);
+  ctx.shadowBlur = 0;
+
+  // Round indicator - top center
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillStyle = COL_LIGHT_GOLD;
+  ctx.textAlign = 'center';
+  ctx.fillText(`第 ${currentRound} / ${TOTAL_ROUNDS} 关`, W / 2, safeTop + 14);
+
+  ctx.restore();
+}
+
+// ── Screens ──
+function drawLoadingScreen() {
+  ctx.save();
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = COL_GOLD;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('加载中...', W / 2, H / 2);
+  ctx.restore();
+}
+
+function drawTitleScreen() {
+  ctx.save();
+
+  // Semi-transparent overlay
+  ctx.globalAlpha = 0.75;
+  ctx.fillStyle = COL_DARK;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+
+  const centerY = H * 0.42;
+
+  // Title
+  ctx.font = `bold ${Math.min(W * 0.09, 36)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = 'rgba(255,215,0,0.6)';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#FFD700';
+  ctx.fillText('钟馗 \u00B7 黄金矿工', W / 2, centerY - 40);
+  ctx.shadowBlur = 0;
+
+  // Subtitle
+  ctx.font = `${Math.min(W * 0.04, 16)}px sans-serif`;
+  ctx.fillStyle = 'rgba(212,168,75,0.7)';
+  ctx.fillText('王者荣耀 Mini-Game Collection', W / 2, centerY);
+
+  // Season name
+  ctx.font = `bold ${Math.min(W * 0.035, 14)}px sans-serif`;
+  ctx.fillStyle = season.colorScheme?.primary || COL_GOLD;
+  ctx.fillText(`\u2014 ${season.name} \u2014`, W / 2, centerY + 25);
+
+  // Personal best
+  if (bestScore) {
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText(`最高纪录: ${formatScore(bestScore.score)}`, W / 2, centerY + 60);
+  }
+
+  // Play button
+  const btnY = centerY + 100;
+  const btnW = 180;
+  const btnH = 50;
+  const pulse = 1 + Math.sin(titlePulse * 2) * 0.03;
+
+  ctx.save();
+  ctx.translate(W / 2, btnY);
+  ctx.scale(pulse, pulse);
+  drawRoundRect(ctx, -btnW / 2, -btnH / 2, btnW, btnH, 12);
+  const btnGrad = ctx.createLinearGradient(-btnW / 2, 0, btnW / 2, 0);
+  btnGrad.addColorStop(0, COL_GOLD);
+  btnGrad.addColorStop(1, '#c49a3a');
+  ctx.fillStyle = btnGrad;
+  ctx.fill();
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = COL_DARK;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('点击开始', 0, 0);
+  ctx.restore();
+
+  // Instructions
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.textAlign = 'center';
+  ctx.fillText('点击屏幕发射钩子 \u00B7 抓取英雄得分', W / 2, H * 0.88);
+  ctx.fillText('小心炸弹 \u00B7 宝箱加时', W / 2, H * 0.91);
+
+  ctx.restore();
+}
+
+function drawCountdown() {
+  ctx.save();
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+
+  // Round text
+  ctx.font = `bold ${Math.min(W * 0.06, 24)}px sans-serif`;
+  ctx.fillStyle = COL_LIGHT_GOLD;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`第 ${currentRound} 关`, W / 2, H * 0.38);
+
+  // Countdown number
+  const scale = 1 + (1 - countdownTimer) * 0.5;
+  const alpha = Math.min(1, (1 - countdownTimer) * 2);
+  ctx.save();
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(scale, scale);
+  ctx.globalAlpha = alpha;
+  ctx.font = 'bold 80px sans-serif';
+  ctx.fillStyle = '#FFD700';
+  ctx.shadowColor = 'rgba(255,215,0,0.6)';
+  ctx.shadowBlur = 30;
+  ctx.fillText(countdownVal > 0 ? countdownVal : 'GO!', 0, 0);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawRoundEnd() {
+  ctx.save();
+
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  if (currentRound < TOTAL_ROUNDS) {
+    ctx.font = `bold ${Math.min(W * 0.07, 28)}px sans-serif`;
+    ctx.fillStyle = COL_GOLD;
+    ctx.fillText(`第 ${currentRound} 关完成!`, W / 2, H * 0.4);
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText(`当前得分: ${formatScore(score)}`, W / 2, H * 0.48);
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText('准备下一关...', W / 2, H * 0.55);
+  } else {
+    ctx.font = `bold ${Math.min(W * 0.07, 28)}px sans-serif`;
+    ctx.fillStyle = COL_GOLD;
+    ctx.fillText('最终关卡完成!', W / 2, H * 0.45);
+    ctx.font = '16px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText('计算总分...', W / 2, H * 0.52);
+  }
+
+  ctx.restore();
+}
+
+function drawGameOver() {
+  ctx.save();
+
+  // Dark overlay
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = COL_DARK;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+
+  const cx = W / 2;
+  const panelW = Math.min(W * 0.88, 340);
+  const panelH = Math.min(H * 0.72, 520);
+  const panelX = cx - panelW / 2;
+  const panelY = (H - panelH) / 2;
+
+  // Panel background
+  ctx.save();
+  drawRoundRect(ctx, panelX, panelY, panelW, panelH, 16);
+  ctx.fillStyle = 'rgba(26, 26, 46, 0.95)';
+  ctx.fill();
+  ctx.strokeStyle = COL_GOLD;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.restore();
+
+  let yOff = panelY + 30;
+
+  // Title
+  ctx.font = 'bold 24px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#FFD700';
+  ctx.shadowColor = 'rgba(255,215,0,0.4)';
+  ctx.shadowBlur = 12;
+  ctx.fillText('游戏结束', cx, yOff);
+  ctx.shadowBlur = 0;
+  yOff += 20;
+
+  // New record
+  if (isNewRecord) {
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillStyle = COL_RED;
+    ctx.fillText('\u2B50 新纪录! \u2B50', cx, yOff + 10);
+    yOff += 25;
+  }
+
+  yOff += 15;
+
+  // Score
+  ctx.font = 'bold 44px sans-serif';
+  ctx.fillStyle = '#FFD700';
+  ctx.shadowColor = 'rgba(255,215,0,0.4)';
+  ctx.shadowBlur = 15;
+  ctx.fillText(formatScore(finalScore), cx, yOff);
+  ctx.shadowBlur = 0;
+  yOff += 15;
+
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.fillText('总分', cx, yOff);
+  yOff += 30;
+
+  // Leaderboard
+  if (leaderboard.length > 0) {
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillStyle = COL_GOLD;
+    ctx.fillText('\u2014 排行榜 TOP 5 \u2014', cx, yOff);
+    yOff += 20;
+
+    const colRank = panelX + 30;
+    const colName = panelX + 60;
+    const colScore = panelX + panelW - 30;
+
+    ctx.font = '12px sans-serif';
+    for (let i = 0; i < leaderboard.length; i++) {
+      const entry = leaderboard[i];
+      const ey = yOff + i * 24;
+      const rankColors = ['#FFD700', '#C0C0C0', '#CD7F32'];
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = i < 3 ? rankColors[i] : 'rgba(255,255,255,0.5)';
+      ctx.font = `bold 13px sans-serif`;
+      ctx.fillText(`#${entry.rank}`, colRank, ey);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = i < 3 ? '#fff' : 'rgba(255,255,255,0.6)';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(entry.name || '玩家', colName, ey);
+
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#FFD700';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText(formatScore(entry.score), colScore, ey);
+    }
+
+    yOff += leaderboard.length * 24 + 15;
+  }
+
+  // Play again button
+  yOff = Math.max(yOff + 10, panelY + panelH - 65);
+  const btnW = 160;
+  const btnH = 44;
+  const pulse = 1 + Math.sin(titlePulse * 2.5) * 0.02;
+
+  ctx.save();
+  ctx.translate(cx, yOff);
+  ctx.scale(pulse, pulse);
+  drawRoundRect(ctx, -btnW / 2, -btnH / 2, btnW, btnH, 10);
+  const btnGrad = ctx.createLinearGradient(-btnW / 2, 0, btnW / 2, 0);
+  btnGrad.addColorStop(0, COL_GOLD);
+  btnGrad.addColorStop(1, '#c49a3a');
+  ctx.fillStyle = btnGrad;
+  ctx.fill();
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillStyle = COL_DARK;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('再来一局', 0, 0);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Boot
+// ═══════════════════════════════════════════════════════════
+init().catch(err => {
+  console.error('Game init failed:', err);
+});
+</script>
+</body>
+</html>
