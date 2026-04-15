@@ -50,6 +50,8 @@ const safeBottom=screen.safeBottom;
 const particles=createParticleSystem(400);
 const floatText=createFloatingText();
 let audio=null;
+let lastWhooshTime=0;
+let tossCountForWhoosh=0;
 let swipe=null;
 let tap=null;
 
@@ -296,24 +298,24 @@ function handleSwipe(pts,velocity){
       comboDisplay=0;
       lives--;
       screenShake=0.4;
-      if(audio)audio.playDeath();
+      if(audio){ audio.playExplosion(); audio.playDeath(); }
       // Explosion effect
       particles.emit(t.x,t.y,{count:30,speed:250,color:COLORS.RED,size:6,gravity:100});
       particles.emit(t.x,t.y,{count:15,speed:150,color:'#FF8800',size:4,gravity:100});
       floatText.add(t.x,t.y,'BOOM!',{color:COLORS.RED,size:32,duration:1});
     }else if(t.type===T_BUFF_BLUE){
       freezeTimer=FREEZE_DURATION;
-      if(audio)audio.playScore();
+      if(audio)audio.playPickup();
       floatText.add(t.x,t.y,'冰冻!',{color:'#00CCFF',size:26,duration:1.2});
       particles.emit(t.x,t.y,{count:20,speed:120,color:'#00CCFF',size:4,gravity:50});
     }else if(t.type===T_BUFF_RED){
       doubleTimer=DOUBLE_DURATION;
-      if(audio)audio.playScore();
+      if(audio)audio.playPickup();
       floatText.add(t.x,t.y,'双倍!',{color:COLORS.RED,size:26,duration:1.2});
       particles.emit(t.x,t.y,{count:20,speed:120,color:COLORS.RED,size:4,gravity:50});
     }else if(t.type===T_BUFF_GREEN){
       lives=Math.min(lives+1,5);
-      if(audio)audio.playScore();
+      if(audio)audio.playPickup();
       floatText.add(t.x,t.y,'+1 ❤',{color:'#44FF44',size:26,duration:1.2});
       particles.emit(t.x,t.y,{count:15,speed:100,color:'#44FF44',size:4,gravity:50});
     }else{
@@ -390,7 +392,10 @@ function createSplitHalves(target,swipePts){
 // ══════════════════════════════════════════════════════════════════════════════
 function handleTap(x,y){
   if(state===S_TITLE){
+    if(!audio) audio=initAudio();
+    if(audio){ audio.playBGM('slash'); audio.setBGMVolume(0.2); }
     if(x<W*0.25&&y<H*0.08){
+      if(audio) audio.stopBGM(0.3);
       window.location.href='../../index.html';
       return;
     }
@@ -403,8 +408,10 @@ function handleTap(x,y){
     }
   }else if(state===S_GAMEOVER){
     if(pointInBtn(x,y,btnReplay)){
+      if(audio) audio.setBGMVolume(0.2);
       state=S_TITLE;
     }else if(pointInBtn(x,y,btnLobby)){
+      if(audio) audio.stopBGM(0.3);
       window.location.href='../../index.html';
       return;
     }
@@ -429,7 +436,7 @@ function activateUltimate(){
   energy=0;
   ultSlashes=[];
   screenShake=0.2;
-  if(audio){audio.playSlash();audio.playCombo(8);}
+  if(audio){audio.playSlash();audio.playUlt();}
 
   // Create dramatic slash marks across screen
   for(let i=0;i<6;i++){
@@ -479,15 +486,21 @@ function startGame(){
   comboDisplay=0;comboDisplayTimer=0;
   particles.clear();
   floatText.clear();
+  if(audio){ audio.playBGM('slash'); audio.setBGMVolume(0.35); }
   if(audio)audio.playCountdown();
 }
 
 function endGame(){
   state=S_GAMEOVER;
   // Save score
-  addScore(GAME_ID,score,LLW);
+  const prevBest=getPersonalBest(GAME_ID);
+  const result=addScore(GAME_ID,score,LLW);
   personalBest=getPersonalBest(GAME_ID);
-  if(audio)audio.playDeath();
+  const isNewRecord=result.rank===1&&score>0;
+  if(audio){
+    audio.setBGMVolume(0.15);
+    if(isNewRecord){ audio.playNewRecord(); }else{ audio.playDeath(); }
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -549,6 +562,8 @@ function update(dt){
   tossTimer+=dt;
   if(tossTimer>=tossInterval){
     tossTimer=0;
+    tossCountForWhoosh++;
+    if(audio&&tossCountForWhoosh%3===0){ audio.playWhoosh(); }
     spawnWave();
   }
 

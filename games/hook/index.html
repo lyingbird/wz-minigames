@@ -187,6 +187,7 @@ async function init() {
 
   // Start
   phase = Phase.TITLE;
+  // BGM will start on first user interaction (initAudioOnce → startGame flow)
   const loop = createGameLoop(update, render);
   loop.start();
 }
@@ -198,7 +199,10 @@ function handleTap(x, y) {
   W = screen.width; H = screen.height;
 
   if (phase === Phase.TITLE) {
+    initAudioOnce();
+    if (audio) { audio.playBGM('hook'); audio.setBGMVolume(0.2); }
     if (x < W * 0.25 && y < H * 0.08) {
+      if (audio) audio.stopBGM(0.3);
       window.location.href = '../../index.html';
       return;
     }
@@ -208,6 +212,7 @@ function handleTap(x, y) {
   if (phase === Phase.GAMEOVER) {
     // Check lobby button (rendered at H*0.93)
     if (y >= H * 0.90 && y <= H * 0.97 && x >= W / 2 - 80 && x <= W / 2 + 80) {
+      if (audio) audio.stopBGM(0.3);
       window.location.href = '../../index.html';
       return;
     }
@@ -230,6 +235,7 @@ function initAudioOnce() {
 // ═══════════════════════════════════════════════════════════
 function startGame() {
   initAudioOnce();
+  if (audio) { audio.playBGM('hook'); audio.setBGMVolume(0.35); }
   if (audio) audio.playStart();
 
   score = 0;
@@ -289,7 +295,10 @@ function endGame() {
   isNewRecord = result.rank === 1;
   leaderboard = getLeaderboard(GAME_ID).slice(0, 5);
   bestScore = getPersonalBest(GAME_ID);
-  if (audio) { isNewRecord ? audio.playCombo(8) : audio.playDeath(); }
+  if (audio) {
+    audio.setBGMVolume(0.15);
+    if (isNewRecord) { audio.playNewRecord(); } else { audio.playDeath(); }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -571,7 +580,7 @@ function processCapture(target) {
     score = Math.max(0, score + pts);
     floatingText.add(target.x, target.y, `${pts}`, { color: COL_RED, size: 28, duration: 1.2 });
     particles.emit(target.x, target.y, { count: 15, speed: 150, color: COL_RED, size: 5, life: 0.6 });
-    if (audio) audio.playDeath();
+    if (audio) { audio.playExplosion(); audio.playDeath(); }
   } else if (target.type === T_TREASURE) {
     // Bonus time
     const bonus = 5;
@@ -579,7 +588,7 @@ function processCapture(target) {
     bonusTimeAdded += bonus;
     floatingText.add(target.x, target.y, `+${bonus}秒!`, { color: '#00FF88', size: 28, duration: 1.5 });
     particles.emit(target.x, target.y, { count: 20, speed: 120, color: '#FFD700', size: 4, life: 0.8 });
-    if (audio) audio.playScore();
+    if (audio) audio.playPickup();
   } else {
     // Score points
     const pts = Math.round(def.score * scoreMod);

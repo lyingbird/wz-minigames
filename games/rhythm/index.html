@@ -835,8 +835,10 @@ function processAutoMiss(dt) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function handleTitleTap(x, y) {
+  if (audio) { audio.playBGM('rhythm'); audio.setBGMVolume(0.2); }
   // Back button
   if (x < W * 0.25 && y < H * 0.08) {
+    if (audio) audio.stopBGM(0.3);
     window.location.href = '../../index.html';
     return;
   }
@@ -912,6 +914,9 @@ function startPlaying() {
   state = S_PLAYING;
   songTime = -0.5; // small lead-in
 
+  // Stop BGM before rhythm game's own music starts
+  if (audio) audio.stopBGM(0.5);
+
   // Create audio context for music if needed
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -939,9 +944,13 @@ function showResults() {
   const scoreRatio = maxPossibleScore > 0 ? score / maxPossibleScore : 0;
 
   // Save to leaderboard
-  addScore(GAME_ID, score, LIBAI, '李白');
+  const result = addScore(GAME_ID, score, LIBAI, '李白');
 
-  audio && audio.playScore();
+  if (audio) {
+    audio.playBGM('rhythm');
+    audio.setBGMVolume(0.15);
+    if (result.rank === 1 && score > 0) { audio.playNewRecord(); } else { audio.playScore(); }
+  }
 }
 
 function handleResultsTap(x, y) {
@@ -960,6 +969,7 @@ function handleResultsTap(x, y) {
   // Back button
   const backX = W / 2 + gap / 2;
   if (x >= backX && x <= backX + btnW && y >= baseY && y <= baseY + btnH) {
+    if (audio) audio.setBGMVolume(0.2);
     state = S_TITLE;
     return;
   }
@@ -967,6 +977,7 @@ function handleResultsTap(x, y) {
   // Lobby button
   const lobbyY = baseY + btnH + H * 0.02;
   if (y >= lobbyY && y <= lobbyY + H * 0.05 && x >= W * 0.2 && x <= W * 0.8) {
+    if (audio) audio.stopBGM(0.3);
     window.location.href = '../../index.html';
     return;
   }

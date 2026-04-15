@@ -201,11 +201,17 @@ async function init(){
 function handleTap(tx,ty){
   W=screen.width;H=screen.height;
   if(state===State.TITLE){
-    if(tx<W*0.25&&ty<H*0.08){window.location.href='../../index.html';return;}
+    if(!audio) audio=initAudio();
+    if(audio){ audio.playBGM('shoot'); audio.setBGMVolume(0.2); }
+    if(tx<W*0.25&&ty<H*0.08){
+      if(audio) audio.stopBGM(0.3);
+      window.location.href='../../index.html';return;
+    }
     startGame();
   }else if(state===State.GAMEOVER){
     // Check lobby button (rendered at H*0.93)
     if(ty>=H*0.90&&ty<=H*0.97&&tx>=W*0.2&&tx<=W*0.8){
+      if(audio) audio.stopBGM(0.3);
       window.location.href='../../index.html';return;
     }
     startGame();
@@ -222,6 +228,7 @@ function handleTap(tx,ty){
 
 function startGame(){
   if(!audio) audio=initAudio();
+  if(audio){ audio.playBGM('shoot'); audio.setBGMVolume(0.35); }
   state=State.COUNTDOWN;
   countdownVal=3;
   countdownTimer=0;
@@ -258,7 +265,7 @@ function activateUlt(){
   ultReady=false;
   ultGlow=1;
   screenTint=0.4;
-  if(audio) audio.playDash();
+  if(audio){ audio.playUlt(); audio.playDash(); }
 }
 
 function fireUltWave(){
@@ -429,7 +436,11 @@ function update(dt){
     dyingTimer-=dt;
     if(dyingTimer<=0){
       state=State.GAMEOVER;
-      addScore(GAME_ID,score,GAME_HEROES.MARKOPOLO||132,'马可波罗');
+      const result=addScore(GAME_ID,score,GAME_HEROES.MARKOPOLO||132,'马可波罗');
+      if(audio){
+        audio.setBGMVolume(0.15);
+        if(result.rank===1&&score>0) audio.playNewRecord();
+      }
     }
     return;
   }

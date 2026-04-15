@@ -91,11 +91,17 @@ async function init(){
   tapDetector.onTap=(x,y)=>{
     W=screen.width;H=screen.height;
     if(state===State.TITLE){
-      if(x<W*0.25&&y<H*0.08){window.location.href='../../index.html';return;}
+      if(!audio){ audio=initAudio(); }
+      if(audio){ audio.playBGM('dodge'); audio.setBGMVolume(0.2); }
+      if(x<W*0.25&&y<H*0.08){
+        if(audio) audio.stopBGM(0.3);
+        window.location.href='../../index.html';return;
+      }
       startGame();
     }else if(state===State.GAMEOVER){
       // Check lobby button at bottom of screen (rendered at H*0.93)
       if(y>=H*0.90&&y<=H*0.97&&x>=W*0.2&&x<=W*0.8){
+        if(audio) audio.stopBGM(0.3);
         window.location.href='../../index.html';return;
       }
       startGame();
@@ -122,6 +128,7 @@ function startGame(){
   if(!audio){
     audio=initAudio();
   }
+  if(audio){ audio.playBGM('dodge'); audio.setBGMVolume(0.35); }
   state=State.COUNTDOWN;
   countdownVal=3;
   countdownTimer=0;
@@ -266,7 +273,11 @@ function update(dt){
     if(dyingTimer>=1.0){
       state=State.GAMEOVER;
       // Save score
-      addScore(GAME_ID,Math.floor(score),GAME_HEROES.DIAOCHAN);
+      const result=addScore(GAME_ID,Math.floor(score),GAME_HEROES.DIAOCHAN);
+      if(audio){
+        audio.setBGMVolume(0.15);
+        if(result.rank===1&&score>0) audio.playNewRecord();
+      }
     }
     return;
   }
@@ -346,7 +357,7 @@ function update(dt){
       score+=200;
       floatingText.add(fateX,fateY-20,'+200',{color:'#FFD700',size:28,duration:1.2});
       particles.emit(fateX,fateY,{count:20,speed:120,color:'#FFD700',size:5,life:0.8});
-      if(audio)audio.playScore();
+      if(audio)audio.playPickup();
     }
     if(fateDuration>=FATE_DURATION)fateActive=false;
   }
@@ -474,7 +485,7 @@ function update(dt){
       floatingText.add(px,py-PLAYER_RADIUS-15,`+${bonus}`,{color:'#fff',size:18,duration:0.7});
       screenFlash=0.3;
       edgeFlash=0.5;
-      if(audio)audio.playScore();
+      if(audio)audio.playGraze();
     }
 
     // Hit check
