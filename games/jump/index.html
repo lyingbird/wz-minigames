@@ -203,108 +203,362 @@ function updateCamera(dt) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Drawing: Platform (Isometric Box)
+// Drawing: Platform Shadow on Ground
 // ═══════════════════════════════════════════════════════════
+function drawPlatformShadow(p) {
+  const center = toScreen(p.wx, p.wy, 0);
+  const shadowOffsetX = 8;
+  const shadowOffsetY = 6;
+  ctx.save();
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(center.x + shadowOffsetX, center.y + shadowOffsetY + 10, p.w * 0.42, p.d * 0.16, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Drawing: Platform (3D Shaded Isometric Box)
+// ═══════════════════════════════════════════════════════════
+let _animTime = 0;
 function drawPlatform(p, isCurrent, isNext) {
+  _animTime += 0.002;
   const hw = p.w / 2;
   const hd = p.d / 2;
   const baseH = p.h + (p.landAnim || 0);
   const colors = PLAT_COLORS[p.type];
+
+  // Draw ground shadow first
+  drawPlatformShadow(p);
+
+  const isCylinder = (p.type === 'buff' || p.type === 'crystal');
 
   // 4 corners of top face
   const tl = toScreen(p.wx - hw, p.wy - hd, baseH);
   const tr = toScreen(p.wx + hw, p.wy - hd, baseH);
   const br = toScreen(p.wx + hw, p.wy + hd, baseH);
   const bl = toScreen(p.wx - hw, p.wy + hd, baseH);
+  const center = toScreen(p.wx, p.wy, baseH);
 
-  // Bottom corners (front two only for visible side faces)
+  // Bottom corners
   const br0 = toScreen(p.wx + hw, p.wy + hd, 0);
   const bl0 = toScreen(p.wx - hw, p.wy + hd, 0);
   const tr0 = toScreen(p.wx + hw, p.wy - hd, 0);
+  const center0 = toScreen(p.wx, p.wy, 0);
 
   ctx.save();
 
-  // Right side face
-  ctx.beginPath();
-  ctx.moveTo(br.x, br.y);
-  ctx.lineTo(tr.x, tr.y);
-  ctx.lineTo(tr0.x, tr0.y);
-  ctx.lineTo(br0.x, br0.y);
-  ctx.closePath();
-  ctx.fillStyle = colors.side;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  if (isCylinder) {
+    // ── Cylindrical platform (buff / crystal) ──
+    const rx = p.w * 0.42;
+    const ry = p.d * 0.18;
+    const bodyH = baseH * ISO_Y * 2 + ry;
 
-  // Front face
-  ctx.beginPath();
-  ctx.moveTo(bl.x, bl.y);
-  ctx.lineTo(br.x, br.y);
-  ctx.lineTo(br0.x, br0.y);
-  ctx.lineTo(bl0.x, bl0.y);
-  ctx.closePath();
-  ctx.fillStyle = colors.front;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Top face
-  ctx.beginPath();
-  ctx.moveTo(tl.x, tl.y);
-  ctx.lineTo(tr.x, tr.y);
-  ctx.lineTo(br.x, br.y);
-  ctx.lineTo(bl.x, bl.y);
-  ctx.closePath();
-  ctx.fillStyle = colors.top;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  // Center dot (perfect landing zone indicator)
-  if (isNext || isCurrent) {
-    const center = toScreen(p.wx, p.wy, baseH);
+    // Cylinder body (gradient)
+    const bodyGrad = ctx.createLinearGradient(center.x - rx, 0, center.x + rx, 0);
+    bodyGrad.addColorStop(0, colors.front);
+    bodyGrad.addColorStop(0.35, colors.side);
+    bodyGrad.addColorStop(0.65, colors.top);
+    bodyGrad.addColorStop(1, colors.front);
+    ctx.fillStyle = bodyGrad;
     ctx.beginPath();
-    ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.ellipse(center.x, center.y + ry, rx, ry, 0, 0, Math.PI); // bottom half of top ellipse
+    ctx.lineTo(center0.x + rx, center0.y + ry);
+    ctx.ellipse(center0.x, center0.y + ry, rx, ry, 0, 0, Math.PI, true); // bottom ellipse reversed
+    ctx.closePath();
+    ctx.fill();
+
+    // Bottom ellipse edge
+    ctx.beginPath();
+    ctx.ellipse(center0.x, center0.y + ry, rx, ry, 0, 0, Math.PI);
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Top ellipse (gradient fill)
+    const topGrad = ctx.createRadialGradient(center.x - rx * 0.2, center.y - ry * 0.3, 0, center.x, center.y, rx);
+    topGrad.addColorStop(0, lightenColor(colors.top, 40));
+    topGrad.addColorStop(0.6, colors.top);
+    topGrad.addColorStop(1, darkenColor(colors.top, 20));
+    ctx.beginPath();
+    ctx.ellipse(center.x, center.y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fillStyle = topGrad;
+    ctx.fill();
+
+    // Rim light on top ellipse
+    ctx.beginPath();
+    ctx.ellipse(center.x, center.y, rx, ry, 0, -Math.PI * 0.8, Math.PI * 0.1);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Highlight spot on top
+    ctx.beginPath();
+    ctx.ellipse(center.x - rx * 0.2, center.y - ry * 0.2, rx * 0.25, ry * 0.25, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fill();
+
+    // ── Buff glow aura ──
+    if (p.type === 'buff') {
+      const pulse = Math.sin(_animTime * 60) * 0.15 + 0.35;
+      const glowGrad = ctx.createRadialGradient(center.x, center.y, rx * 0.3, center.x, center.y, rx * 1.6);
+      glowGrad.addColorStop(0, `rgba(255,80,60,${pulse})`);
+      glowGrad.addColorStop(1, 'rgba(255,80,60,0)');
+      ctx.beginPath();
+      ctx.ellipse(center.x, center.y, rx * 1.6, ry * 2.2, 0, 0, Math.PI * 2);
+      ctx.fillStyle = glowGrad;
+      ctx.fill();
+    }
+
+    // ── Crystal shimmer ──
+    if (p.type === 'crystal') {
+      const shimmer = Math.sin(_animTime * 80) * 0.2 + 0.4;
+      const shimGrad = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, rx * 1.8);
+      shimGrad.addColorStop(0, `rgba(220,180,255,${shimmer})`);
+      shimGrad.addColorStop(0.5, `rgba(180,120,255,${shimmer * 0.4})`);
+      shimGrad.addColorStop(1, 'rgba(180,120,255,0)');
+      ctx.beginPath();
+      ctx.ellipse(center.x, center.y, rx * 1.8, ry * 2.5, 0, 0, Math.PI * 2);
+      ctx.fillStyle = shimGrad;
+      ctx.fill();
+
+      // Sparkle dots
+      for (let i = 0; i < 5; i++) {
+        const angle = _animTime * 40 + i * Math.PI * 2 / 5;
+        const dist = rx * (0.6 + Math.sin(_animTime * 30 + i) * 0.3);
+        const sx = center.x + Math.cos(angle) * dist;
+        const sy = center.y + Math.sin(angle) * dist * 0.4;
+        const sparkAlpha = Math.max(0, Math.sin(_animTime * 50 + i * 2)) * 0.7;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${sparkAlpha})`;
+        ctx.fill();
+      }
+
+      // Light rays
+      ctx.save();
+      ctx.globalAlpha = 0.08 + Math.sin(_animTime * 40) * 0.04;
+      for (let i = 0; i < 4; i++) {
+        const angle = _animTime * 20 + i * Math.PI / 2;
+        const rayLen = rx * 2;
+        ctx.beginPath();
+        ctx.moveTo(center.x, center.y);
+        ctx.lineTo(center.x + Math.cos(angle) * rayLen, center.y + Math.sin(angle) * rayLen * 0.4);
+        ctx.strokeStyle = '#E0C0FF';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+  } else {
+    // ── Box platform (tower / barracks / jungle) ──
+
+    // Right side face with gradient (brighter — directional light from upper-right)
+    const rGrad = ctx.createLinearGradient(tr.x, tr.y, tr0.x, tr0.y);
+    rGrad.addColorStop(0, lightenColor(colors.side, 15));
+    rGrad.addColorStop(1, darkenColor(colors.side, 25));
+    ctx.beginPath();
+    ctx.moveTo(br.x, br.y); ctx.lineTo(tr.x, tr.y);
+    ctx.lineTo(tr0.x, tr0.y); ctx.lineTo(br0.x, br0.y);
+    ctx.closePath();
+    ctx.fillStyle = rGrad;
+    ctx.fill();
+
+    // Front face with gradient (darker — away from light)
+    const fGrad = ctx.createLinearGradient(bl.x, bl.y, bl0.x, bl0.y);
+    fGrad.addColorStop(0, lightenColor(colors.front, 5));
+    fGrad.addColorStop(1, darkenColor(colors.front, 30));
+    ctx.beginPath();
+    ctx.moveTo(bl.x, bl.y); ctx.lineTo(br.x, br.y);
+    ctx.lineTo(br0.x, br0.y); ctx.lineTo(bl0.x, bl0.y);
+    ctx.closePath();
+    ctx.fillStyle = fGrad;
+    ctx.fill();
+
+    // Top face with radial gradient (lighter center, darker edges — overhead light)
+    ctx.beginPath();
+    ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y);
+    ctx.lineTo(br.x, br.y); ctx.lineTo(bl.x, bl.y);
+    ctx.closePath();
+    // Use a radial gradient for the top face
+    const topCx = (tl.x + tr.x + br.x + bl.x) / 4;
+    const topCy = (tl.y + tr.y + br.y + bl.y) / 4;
+    const topR = Math.max(p.w, p.d) * 0.55;
+    const tGrad = ctx.createRadialGradient(topCx - topR * 0.15, topCy - topR * 0.15, 0, topCx, topCy, topR);
+    tGrad.addColorStop(0, lightenColor(colors.top, 35));
+    tGrad.addColorStop(0.5, colors.top);
+    tGrad.addColorStop(1, darkenColor(colors.top, 15));
+    ctx.fillStyle = tGrad;
+    ctx.fill();
+
+    // Highlight spot on top face
+    ctx.beginPath();
+    ctx.ellipse(topCx - topR * 0.15, topCy - topR * 0.2, topR * 0.2, topR * 0.12, -0.3, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fill();
+
+    // ── Rim light: bright lines along top edges ──
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.2;
+    // Top-left to top-right (back edge)
+    ctx.beginPath(); ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y); ctx.stroke();
+    // Top-right to bottom-right (right edge)
+    ctx.beginPath(); ctx.moveTo(tr.x, tr.y); ctx.lineTo(br.x, br.y); ctx.stroke();
+    // Dimmer rim on front edges
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.beginPath(); ctx.moveTo(br.x, br.y); ctx.lineTo(bl.x, bl.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bl.x, bl.y); ctx.lineTo(tl.x, tl.y); ctx.stroke();
+
+    // Side edge lines (vertical) — subtle
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(br.x, br.y); ctx.lineTo(br0.x, br0.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bl.x, bl.y); ctx.lineTo(bl0.x, bl0.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tr.x, tr.y); ctx.lineTo(tr0.x, tr0.y); ctx.stroke();
+
+    // ── Type-specific decorations ──
+    if (p.type === 'tower') {
+      // Crenellations on top edges (small notches)
+      const crenCount = 4;
+      const crenSize = 3;
+      for (let i = 0; i < crenCount; i++) {
+        const t = (i + 0.5) / crenCount;
+        // Along back edge (tl -> tr)
+        const cx1 = tl.x + (tr.x - tl.x) * t;
+        const cy1 = tl.y + (tr.y - tl.y) * t;
+        ctx.fillStyle = lightenColor(colors.top, 20);
+        ctx.fillRect(cx1 - crenSize / 2, cy1 - crenSize - 1, crenSize, crenSize);
+        // Along right edge (tr -> br)
+        const cx2 = tr.x + (br.x - tr.x) * t;
+        const cy2 = tr.y + (br.y - tr.y) * t;
+        ctx.fillRect(cx2 - crenSize / 2, cy2 - crenSize - 1, crenSize, crenSize);
+      }
+      // Metallic sheen on right side
+      ctx.save();
+      ctx.globalAlpha = 0.08;
+      ctx.beginPath();
+      ctx.moveTo(br.x, br.y); ctx.lineTo(tr.x, tr.y);
+      ctx.lineTo(tr0.x, tr0.y); ctx.lineTo(br0.x, br0.y);
+      ctx.closePath();
+      const metalGrad = ctx.createLinearGradient(tr.x, tr.y, br0.x, br0.y);
+      metalGrad.addColorStop(0, '#fff');
+      metalGrad.addColorStop(0.4, 'transparent');
+      metalGrad.addColorStop(0.6, '#fff');
+      metalGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = metalGrad;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (p.type === 'barracks') {
+      // Horizontal wood-plank lines on front face
+      const planks = 5;
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+      ctx.lineWidth = 0.7;
+      for (let i = 1; i < planks; i++) {
+        const t = i / planks;
+        const lx = bl.x + (bl0.x - bl.x) * t;
+        const ly = bl.y + (bl0.y - bl.y) * t;
+        const rx2 = br.x + (br0.x - br.x) * t;
+        const ry2 = br.y + (br0.y - br.y) * t;
+        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(rx2, ry2); ctx.stroke();
+      }
+      // Same on right side
+      for (let i = 1; i < planks; i++) {
+        const t = i / planks;
+        const lx = tr.x + (tr0.x - tr.x) * t;
+        const ly = tr.y + (tr0.y - tr.y) * t;
+        const rx2 = br.x + (br0.x - br.x) * t;
+        const ry2 = br.y + (br0.y - br.y) * t;
+        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(rx2, ry2); ctx.stroke();
+      }
+    }
+
+    if (p.type === 'jungle') {
+      // Rough edges — draw jagged overlay on top
+      ctx.save();
+      ctx.globalAlpha = 0.1;
+      for (let i = 0; i < 6; i++) {
+        const ox = (Math.sin(p.wx * 0.1 + i * 7) * 3);
+        const oy = (Math.cos(p.wy * 0.1 + i * 5) * 2);
+        ctx.beginPath();
+        ctx.arc(topCx + ox * (i - 3), topCy + oy * (i - 3), 3 + i, 0, Math.PI * 2);
+        ctx.fillStyle = i % 2 === 0 ? '#000' : '#fff';
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  // ── Landing zone indicator on next platform ──
+  if (isNext) {
+    // Bullseye target on top face
+    const tc = center;
+    const ringR = Math.min(p.w, p.d) * 0.2;
+    // Outer ring
+    ctx.beginPath();
+    ctx.ellipse(tc.x, tc.y, ringR, ringR * 0.4, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Inner ring
+    ctx.beginPath();
+    ctx.ellipse(tc.x, tc.y, ringR * 0.5, ringR * 0.2, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.stroke();
+    // Perfect zone golden glow
+    const pzGrad = ctx.createRadialGradient(tc.x, tc.y, 0, tc.x, tc.y, ringR * 0.5);
+    pzGrad.addColorStop(0, 'rgba(212,168,75,0.2)');
+    pzGrad.addColorStop(1, 'rgba(212,168,75,0)');
+    ctx.beginPath();
+    ctx.ellipse(tc.x, tc.y, ringR * 0.5, ringR * 0.2, 0, 0, Math.PI * 2);
+    ctx.fillStyle = pzGrad;
     ctx.fill();
   }
 
-  // Glow effect for current platform
+  // ── Glow effect for current platform ──
   if (isCurrent && !jumping && !falling) {
     p.glowAnim += 0.03;
-    const glowAlpha = 0.15 + Math.sin(p.glowAnim) * 0.1;
-    ctx.beginPath();
-    ctx.moveTo(tl.x, tl.y);
-    ctx.lineTo(tr.x, tr.y);
-    ctx.lineTo(br.x, br.y);
-    ctx.lineTo(bl.x, bl.y);
-    ctx.closePath();
+    const glowAlpha = 0.12 + Math.sin(p.glowAnim) * 0.08;
+    if (isCylinder) {
+      const rx = p.w * 0.42;
+      const ry = p.d * 0.18;
+      ctx.beginPath();
+      ctx.ellipse(center.x, center.y, rx, ry, 0, 0, Math.PI * 2);
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y);
+      ctx.lineTo(br.x, br.y); ctx.lineTo(bl.x, bl.y);
+      ctx.closePath();
+    }
     ctx.fillStyle = `rgba(212,168,75,${glowAlpha})`;
-    ctx.fill();
-  }
-
-  // Crystal special glow
-  if (p.type === 'crystal') {
-    const center = toScreen(p.wx, p.wy, baseH);
-    const gRad = Math.max(p.w, p.d) * 0.4;
-    const grad = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, gRad);
-    grad.addColorStop(0, 'rgba(200,150,255,0.3)');
-    grad.addColorStop(1, 'rgba(200,150,255,0)');
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, gRad, 0, Math.PI * 2);
-    ctx.fillStyle = grad;
     ctx.fill();
   }
 
   ctx.restore();
 }
 
+// ── Color utility helpers ──
+function lightenColor(hex, amount) {
+  const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + amount);
+  const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + amount);
+  const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + amount);
+  return `rgb(${r},${g},${b})`;
+}
+function darkenColor(hex, amount) {
+  const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount);
+  const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount);
+  const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount);
+  return `rgb(${r},${g},${b})`;
+}
+
 // ═══════════════════════════════════════════════════════════
-// Drawing: Lian Po
+// Drawing: Lian Po (3D Pawn / Chess-piece style)
 // ═══════════════════════════════════════════════════════════
+let _chargeDustTimer = 0;
+let _landSquishTimer = 0;
 function drawLianPo() {
   const pos = toScreen(lpX, lpY, lpZ);
   const avatarImg = getAvatarImage(HERO_ID);
@@ -316,111 +570,222 @@ function drawLianPo() {
     ctx.rotate(lpRotation);
   }
 
-  // Shadow drawn separately via drawShadow()
+  // Scale for squish/stretch
+  const scX = charging ? (1 + 0.15 * (chargePower / MAX_CHARGE)) : 1;
+  const scY = lpScaleY;
 
-  const bodyW = 30;
-  const bodyH = 36 * lpScaleY;
-  const headR = 16;
+  ctx.scale(scX, scY);
 
-  // Body (stocky round rectangle)
-  ctx.fillStyle = '#4A6B8A';
-  drawRoundRect(ctx, -bodyW / 2, -bodyH - headR * 0.3, bodyW, bodyH, 8);
+  const bodyW = 32;
+  const bodyH = 38;
+  const headR = 17;
+  const baseRx = bodyW * 0.65;
+  const baseRy = 7;
+  const baseY = 0; // bottom of character
+
+  // ── Elliptical base (chess piece base) ──
+  const baseGrad = ctx.createLinearGradient(-baseRx, baseY - 3, baseRx, baseY + 3);
+  baseGrad.addColorStop(0, '#2C3E50');
+  baseGrad.addColorStop(0.5, '#4A6B8A');
+  baseGrad.addColorStop(1, '#1A2530');
+  ctx.beginPath();
+  ctx.ellipse(0, baseY, baseRx, baseRy, 0, 0, Math.PI * 2);
+  ctx.fillStyle = baseGrad;
   ctx.fill();
-  ctx.strokeStyle = '#2C3E50';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 0.8;
   ctx.stroke();
 
-  // Armor stripe
-  ctx.fillStyle = '#D4A84B';
-  ctx.fillRect(-bodyW / 2 + 4, -bodyH - headR * 0.3 + bodyH * 0.3, bodyW - 8, 4);
+  // ── Body: truncated oval shape (wider at bottom, narrower at top) ──
+  const bodyTop = -bodyH - 2;
+  const bodyBot = -4;
+  const bodyMid = (bodyTop + bodyBot) / 2;
+  const topW = bodyW * 0.42;
+  const botW = bodyW * 0.55;
+  const midW = bodyW * 0.58;
 
-  // Head circle with avatar
+  // Body fill with gradient
+  const bGrad = ctx.createLinearGradient(0, bodyTop, 0, bodyBot);
+  bGrad.addColorStop(0, '#5A8AB5');
+  bGrad.addColorStop(0.3, '#4A6B8A');
+  bGrad.addColorStop(1, '#2C3E50');
+  ctx.beginPath();
+  ctx.moveTo(-topW, bodyTop);
+  ctx.quadraticCurveTo(-midW, bodyMid, -botW, bodyBot);
+  ctx.lineTo(botW, bodyBot);
+  ctx.quadraticCurveTo(midW, bodyMid, topW, bodyTop);
+  ctx.closePath();
+  ctx.fillStyle = bGrad;
+  ctx.fill();
+  ctx.strokeStyle = '#1A2530';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // ── Specular highlight arc (upper-left of body) ──
+  ctx.save();
+  ctx.globalAlpha = 0.2;
+  ctx.beginPath();
+  ctx.ellipse(-topW * 0.3, bodyTop + bodyH * 0.25, topW * 0.5, bodyH * 0.3, -0.2, -Math.PI * 0.4, Math.PI * 0.6);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.restore();
+
+  // ── Armor belt / stripe ──
+  const beltY = bodyTop + bodyH * 0.45;
+  const beltHalfW = topW + (botW - topW) * 0.45;
+  ctx.fillStyle = '#D4A84B';
+  ctx.beginPath();
+  ctx.moveTo(-beltHalfW, beltY - 3);
+  ctx.quadraticCurveTo(0, beltY - 5, beltHalfW, beltY - 3);
+  ctx.lineTo(beltHalfW, beltY + 3);
+  ctx.quadraticCurveTo(0, beltY + 1, -beltHalfW, beltY + 3);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#B8860B';
+  ctx.lineWidth = 0.5;
+  ctx.stroke();
+
+  // ── Head: circle with avatar, slightly overlapping body top ──
+  const headCy = bodyTop - headR + 5;
+
+  // Head shadow behind (gives depth)
+  ctx.beginPath();
+  ctx.arc(1, headCy + 2, headR + 1, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fill();
+
   if (avatarImg) {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(0, -bodyH - headR * 0.3 - headR + 2, headR, 0, Math.PI * 2);
+    ctx.arc(0, headCy, headR, 0, Math.PI * 2);
     ctx.clip();
-    ctx.drawImage(avatarImg,
-      -headR, -bodyH - headR * 0.3 - headR * 2 + 2,
-      headR * 2, headR * 2);
+    ctx.drawImage(avatarImg, -headR, headCy - headR, headR * 2, headR * 2);
     ctx.restore();
-    // Border
+    // Border ring with gradient
     ctx.beginPath();
-    ctx.arc(0, -bodyH - headR * 0.3 - headR + 2, headR, 0, Math.PI * 2);
+    ctx.arc(0, headCy, headR, 0, Math.PI * 2);
     ctx.strokeStyle = '#D4A84B';
     ctx.lineWidth = 2.5;
     ctx.stroke();
-  } else {
-    // Fallback: colored circle
+    // Rim highlight on head
     ctx.beginPath();
-    ctx.arc(0, -bodyH - headR * 0.3 - headR + 2, headR, 0, Math.PI * 2);
-    ctx.fillStyle = '#D4A84B';
+    ctx.arc(0, headCy, headR, -Math.PI * 0.8, -Math.PI * 0.1);
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  } else {
+    // Fallback head
+    const hGrad = ctx.createRadialGradient(-3, headCy - 3, 0, 0, headCy, headR);
+    hGrad.addColorStop(0, '#EAC85B');
+    hGrad.addColorStop(1, '#B8860B');
+    ctx.beginPath();
+    ctx.arc(0, headCy, headR, 0, Math.PI * 2);
+    ctx.fillStyle = hGrad;
     ctx.fill();
-    ctx.strokeStyle = '#B8860B';
+    ctx.strokeStyle = '#8B6508';
     ctx.lineWidth = 2;
     ctx.stroke();
   }
-
-  // Feet
-  ctx.fillStyle = '#2C3E50';
-  ctx.fillRect(-10, -2, 8, 4);
-  ctx.fillRect(2, -2, 8, 4);
 
   ctx.restore();
 }
 
 function drawShadow() {
   if (state !== 'playing' && state !== 'jumping') return;
-  // Project shadow onto whichever platform is below
   const curPlat = platforms[currentPlatIdx];
   const nextPlat = platforms[currentPlatIdx + 1];
-  // Use next platform height if jumping toward it, else current
   const refPlat = (jumping && nextPlat) ? nextPlat : curPlat;
   if (!refPlat) return;
   const platH = refPlat.h;
   const shadowPos = toScreen(lpX, lpY, platH);
 
   const heightAbove = Math.max(0, lpZ - platH);
-  const shadowScale = Math.max(0.3, 1 - heightAbove / 300);
-  const shadowAlpha = Math.max(0.1, 0.4 * shadowScale);
+  const shadowScale = Math.max(0.3, 1 - heightAbove / 250);
+  const shadowAlpha = Math.max(0.08, 0.5 * shadowScale);
 
   ctx.save();
   ctx.globalAlpha = shadowAlpha;
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  // Soft shadow with radial gradient
+  const sr = 18 * shadowScale;
+  const sry = 7 * shadowScale;
+  const sGrad = ctx.createRadialGradient(shadowPos.x, shadowPos.y + 2, 0, shadowPos.x, shadowPos.y + 2, sr);
+  sGrad.addColorStop(0, 'rgba(0,0,0,0.7)');
+  sGrad.addColorStop(0.6, 'rgba(0,0,0,0.3)');
+  sGrad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.beginPath();
-  ctx.ellipse(shadowPos.x, shadowPos.y + 2, 14 * shadowScale, 6 * shadowScale, 0, 0, Math.PI * 2);
+  ctx.ellipse(shadowPos.x, shadowPos.y + 2, sr, sry, 0, 0, Math.PI * 2);
+  ctx.fillStyle = sGrad;
   ctx.fill();
   ctx.restore();
 }
 
 // ═══════════════════════════════════════════════════════════
-// Drawing: Power Bar
+// Drawing: Power Meter (circular arc around character)
 // ═══════════════════════════════════════════════════════════
 function drawPowerBar() {
   if (!charging) return;
 
   const pos = toScreen(lpX, lpY, lpZ);
-  const barW = 40;
-  const barH = 6;
-  const bx = pos.x - barW / 2;
-  const by = pos.y - 70;
   const fill = chargePower / MAX_CHARGE;
+  const radius = 38;
+  const lineW = 4;
+  const startAngle = -Math.PI * 0.5;
+  const endAngle = startAngle + fill * Math.PI * 2;
 
   ctx.save();
-  // Background
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  drawRoundRect(ctx, bx - 2, by - 2, barW + 4, barH + 4, 4);
-  ctx.fill();
-  // Fill
-  const fillColor = fill < 0.5 ? '#4CAF50' : fill < 0.8 ? '#D4A84B' : '#E74C3C';
-  ctx.fillStyle = fillColor;
-  drawRoundRect(ctx, bx, by, barW * fill, barH, 3);
-  ctx.fill();
-  // Border
-  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-  ctx.lineWidth = 1;
-  drawRoundRect(ctx, bx, by, barW, barH, 3);
+
+  // Background ring (dim)
+  ctx.beginPath();
+  ctx.arc(pos.x, pos.y - 28, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.lineWidth = lineW;
   ctx.stroke();
+
+  // Colored arc — green to yellow to orange to red
+  let arcColor;
+  if (fill < 0.35) {
+    arcColor = '#4CAF50';
+  } else if (fill < 0.6) {
+    arcColor = '#F1C40F';
+  } else if (fill < 0.85) {
+    arcColor = '#E67E22';
+  } else {
+    arcColor = '#E74C3C';
+  }
+  ctx.beginPath();
+  ctx.arc(pos.x, pos.y - 28, radius, startAngle, endAngle);
+  ctx.strokeStyle = arcColor;
+  ctx.lineWidth = lineW;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Glow on the arc
+  ctx.beginPath();
+  ctx.arc(pos.x, pos.y - 28, radius, startAngle, endAngle);
+  ctx.strokeStyle = arcColor;
+  ctx.lineWidth = lineW + 4;
+  ctx.globalAlpha = 0.2;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // At max power, pulse effect and shake hint
+  if (fill > 0.95) {
+    const pulse = Math.sin(_animTime * 100) * 0.3 + 0.5;
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y - 28, radius + 4, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(231,76,60,${pulse})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Charge percentage text
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = arcColor;
+  ctx.fillText(Math.round(fill * 100) + '%', pos.x, pos.y - 28 - radius - 10);
+
   ctx.restore();
 }
 
@@ -458,40 +823,107 @@ function drawHUD() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Drawing: Background
+// Drawing: Background (3D depth with gradient, mountains, grid)
 // ═══════════════════════════════════════════════════════════
 function drawBackground() {
   const season = getCurrentSeason();
   const cs = season.colorScheme;
 
-  // Gradient sky
+  // ── Deep gradient sky (dark blue-purple at top, slightly lighter at bottom) ──
   const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, cs.secondary || '#0B1929');
-  grad.addColorStop(0.5, '#151535');
-  grad.addColorStop(1, '#1A1A2E');
+  grad.addColorStop(0, '#0A0A2A');
+  grad.addColorStop(0.3, cs.secondary || '#0B1929');
+  grad.addColorStop(0.7, '#151535');
+  grad.addColorStop(1, '#1E1E3A');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
 
-  // Subtle grid for depth
+  // ── Distant mountain silhouettes (faint, near top) ──
   ctx.save();
+  ctx.globalAlpha = 0.06;
+  ctx.fillStyle = '#4A4A7A';
+  const mBase = H * 0.28;
+  ctx.beginPath();
+  ctx.moveTo(0, mBase);
+  ctx.lineTo(W * 0.08, mBase - 45);
+  ctx.lineTo(W * 0.18, mBase - 20);
+  ctx.lineTo(W * 0.30, mBase - 65);
+  ctx.lineTo(W * 0.42, mBase - 30);
+  ctx.lineTo(W * 0.55, mBase - 75);
+  ctx.lineTo(W * 0.65, mBase - 40);
+  ctx.lineTo(W * 0.78, mBase - 58);
+  ctx.lineTo(W * 0.88, mBase - 25);
+  ctx.lineTo(W, mBase - 50);
+  ctx.lineTo(W, mBase);
+  ctx.closePath();
+  ctx.fill();
+  // Second layer (slightly closer, lighter)
   ctx.globalAlpha = 0.04;
-  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = '#6A6A9A';
+  const m2Base = H * 0.34;
+  ctx.beginPath();
+  ctx.moveTo(0, m2Base);
+  ctx.lineTo(W * 0.12, m2Base - 30);
+  ctx.lineTo(W * 0.25, m2Base - 10);
+  ctx.lineTo(W * 0.40, m2Base - 40);
+  ctx.lineTo(W * 0.58, m2Base - 15);
+  ctx.lineTo(W * 0.72, m2Base - 45);
+  ctx.lineTo(W * 0.90, m2Base - 20);
+  ctx.lineTo(W, m2Base - 35);
+  ctx.lineTo(W, m2Base);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // ── Faint cloud wisps ──
+  ctx.save();
+  ctx.globalAlpha = 0.03;
+  ctx.fillStyle = '#8888BB';
+  for (let i = 0; i < 3; i++) {
+    const cx = W * (0.2 + i * 0.3) + Math.sin(_animTime * 5 + i) * 15;
+    const cy = H * 0.15 + i * 20;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 60 + i * 20, 8 + i * 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // ── Subtle isometric grid (ground plane reference) ──
+  ctx.save();
+  ctx.globalAlpha = 0.035;
+  ctx.strokeStyle = '#8888CC';
   ctx.lineWidth = 0.5;
   const gridStep = 60;
   const ox = (camX * 0.3) % gridStep;
   const oy = (camY * 0.3) % gridStep;
-  for (let x = -gridStep + ox; x < W + gridStep; x += gridStep) {
+  // Diagonal lines to suggest isometric ground
+  for (let x = -gridStep * 2 + ox; x < W + gridStep * 2; x += gridStep) {
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
+    ctx.moveTo(x, H * 0.6);
+    ctx.lineTo(x + H * 0.5, H);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, H * 0.6);
+    ctx.lineTo(x - H * 0.5, H);
     ctx.stroke();
   }
-  for (let y = -gridStep + oy; y < H + gridStep; y += gridStep) {
+  // Horizontal scanlines for floor
+  ctx.globalAlpha = 0.02;
+  for (let y = H * 0.65 + oy; y < H; y += gridStep * 0.5) {
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(W, y);
     ctx.stroke();
   }
+  ctx.restore();
+
+  // ── Ground plane gradient at bottom (spatial reference) ──
+  ctx.save();
+  const floorGrad = ctx.createLinearGradient(0, H * 0.8, 0, H);
+  floorGrad.addColorStop(0, 'rgba(30,30,60,0)');
+  floorGrad.addColorStop(1, 'rgba(30,30,60,0.3)');
+  ctx.fillStyle = floorGrad;
+  ctx.fillRect(0, H * 0.8, W, H * 0.2);
   ctx.restore();
 }
 
@@ -558,6 +990,10 @@ function handleLanding(result) {
   // Snap position
   lpZ = nextPlat.h;
 
+  // Landing squish animation (scaleY briefly compresses then bounces back)
+  lpScaleY = 0.65;
+  _landSquishTimer = 0.25;
+
   // Score calculation
   let points = 1;
   let isPerfect = result === 'perfect';
@@ -580,9 +1016,13 @@ function handleLanding(result) {
   const landPos = toScreen(nextPlat.wx, nextPlat.wy, nextPlat.h);
 
   if (isPerfect) {
-    // Perfect landing effects
+    // Perfect landing: golden particle burst + screen flash
     particles.emit(landPos.x, landPos.y, {
-      count: 20, speed: 120, life: 0.8, color: COLORS.GOLD, size: 4, gravity: 100
+      count: 25, speed: 140, life: 0.9, color: COLORS.GOLD, size: 4, gravity: 100
+    });
+    // Extra white flash particles
+    particles.emit(landPos.x, landPos.y - 5, {
+      count: 8, speed: 60, life: 0.4, color: '#fff', size: 3, gravity: 50
     });
     floatingText.add(landPos.x, landPos.y - 40, `PERFECT +${points}`, {
       color: COLORS.GOLD, size: 22, duration: 1.2
@@ -593,9 +1033,9 @@ function handleLanding(result) {
       if (combo >= 2) audio.playCombo(Math.min(combo, 8));
     }
   } else if (result === 'edge') {
-    // Edge landing - wobbly
+    // Edge landing: small dust
     particles.emit(landPos.x, landPos.y, {
-      count: 5, speed: 50, life: 0.4, color: '#aaa', size: 3, gravity: 80
+      count: 4, speed: 40, life: 0.35, color: '#999', size: 2.5, gravity: 70
     });
     floatingText.add(landPos.x, landPos.y - 30, `+${points}`, {
       color: '#ccc', size: 16, duration: 0.8
@@ -603,9 +1043,13 @@ function handleLanding(result) {
     triggerShake(2, 15);
     if (audio) audio.playHit();
   } else {
-    // Normal landing
+    // Normal landing: dust burst radiating outward
     particles.emit(landPos.x, landPos.y, {
-      count: 10, speed: 80, life: 0.6, color: '#B0C4DE', size: 3, gravity: 100
+      count: 8, speed: 90, life: 0.5, color: '#B0C4DE', size: 3, gravity: 90
+    });
+    // Secondary dust puffs
+    particles.emit(landPos.x, landPos.y + 3, {
+      count: 4, speed: 30, life: 0.6, color: 'rgba(200,210,230,0.6)', size: 4, gravity: -15
     });
     floatingText.add(landPos.x, landPos.y - 35, `+${points}`, {
       color: '#fff', size: 18, duration: 1
@@ -1037,8 +1481,8 @@ function update(dt) {
     chargeTime += dt;
     chargePower = Math.min(chargeTime * CHARGE_RATE, MAX_CHARGE);
 
-    // Squish effect
-    lpScaleY = 1 - 0.3 * (chargePower / MAX_CHARGE);
+    // Squish effect (compress Y toward 0.6)
+    lpScaleY = 1 - 0.4 * (chargePower / MAX_CHARGE);
 
     // Shake at high charge
     if (chargePower > MAX_CHARGE * 0.7) {
@@ -1050,6 +1494,17 @@ function update(dt) {
     const curPlat = platforms[currentPlatIdx];
     if (curPlat) {
       curPlat.landAnim = -5 * (chargePower / MAX_CHARGE);
+    }
+
+    // Charging dust particles rising from feet
+    _chargeDustTimer += dt;
+    if (_chargeDustTimer > 0.08 && chargePower > 0.3) {
+      _chargeDustTimer = 0;
+      const feetPos = toScreen(lpX, lpY, lpZ);
+      particles.emit(feetPos.x + (Math.random() - 0.5) * 16, feetPos.y, {
+        count: 1, speed: 15, life: 0.4,
+        color: 'rgba(200,200,220,0.5)', size: 2, gravity: -40
+      });
     }
   }
 
@@ -1077,13 +1532,23 @@ function update(dt) {
       // Somersault rotation
       lpRotation = jumpT * Math.PI * 2;
 
-      // Trail particles
-      if (Math.random() < 0.4) {
+      // Stretch body while in air
+      lpScaleY = 1 + 0.2 * Math.sin(jumpT * Math.PI);
+
+      // Jump trail particles (fading circles along the arc)
+      if (Math.random() < 0.6) {
         const pos = toScreen(lpX, lpY, lpZ);
-        particles.emit(pos.x, pos.y, {
-          count: 1, speed: 20, life: 0.3,
-          color: 'rgba(212,168,75,0.6)', size: 2, gravity: 30
+        particles.emit(pos.x, pos.y + 5, {
+          count: 1, speed: 8, life: 0.5,
+          color: 'rgba(212,168,75,0.4)', size: 4, gravity: 15
         });
+        // Secondary subtle trail
+        if (Math.random() < 0.3) {
+          particles.emit(pos.x + (Math.random() - 0.5) * 10, pos.y + 8, {
+            count: 1, speed: 5, life: 0.3,
+            color: 'rgba(180,200,220,0.3)', size: 2.5, gravity: 20
+          });
+        }
       }
     }
   }
@@ -1101,6 +1566,21 @@ function update(dt) {
     // Shrink while falling
     lpScaleY = Math.max(0.3, 1 - fallT * 0.5);
     lpRotation += dt * 8;
+  }
+
+  // Landing squish recovery (bounce back from 0.65 to 1.0)
+  if (_landSquishTimer > 0 && !charging && !jumping && !falling) {
+    _landSquishTimer -= dt;
+    if (_landSquishTimer > 0.15) {
+      // Still squishing phase
+      lpScaleY = 0.65 + (0.35 * (1 - (_landSquishTimer - 0.15) / 0.10));
+    } else if (_landSquishTimer > 0) {
+      // Bounce back phase — slight overshoot to 1.05 then settle
+      const t = 1 - _landSquishTimer / 0.15;
+      lpScaleY = 1.0 + 0.08 * Math.sin(t * Math.PI);
+    } else {
+      lpScaleY = 1;
+    }
   }
 
   // Platform land animation recovery
