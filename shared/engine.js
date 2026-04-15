@@ -11,12 +11,19 @@
 
 // ─── 1. Canvas Management ────────────────────────────────────────────────────
 
+/** Design width for FIXED_WIDTH scaling (iPhone 14 baseline) */
+const DESIGN_WIDTH = 390;
+
 /**
- * Creates a full-screen canvas inside `container`, handling DPR for crisp
- * rendering on retina screens. Locks to portrait and auto-resizes.
+ * Creates a full-screen canvas inside `container` with FIXED_WIDTH scaling.
+ *
+ * The game always sees `width = 390` (design width). Height varies by device
+ * aspect ratio — taller phones see more vertical content. All coordinates in
+ * game code are in design-resolution units; the engine handles DPR + scaling
+ * via ctx.setTransform so games never need to multiply by a scale factor.
  *
  * @param {HTMLElement} container
- * @returns {{ canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number }}
+ * @returns {{ canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, width: number, height: number, dpr: number, scale: number, cssW: number, cssH: number, safeTop: number, safeBottom: number }}
  */
 export function createCanvas(container) {
   const canvas = document.createElement('canvas');
@@ -29,7 +36,7 @@ export function createCanvas(container) {
   container.appendChild(canvas);
 
   const ctx = canvas.getContext('2d');
-  const state = { canvas, ctx, width: 0, height: 0, dpr: 1 };
+  const state = { canvas, ctx, width: 0, height: 0, dpr: 1, scale: 1, cssW: 0, cssH: 0, safeTop: 0, safeBottom: 0 };
 
   // Rotation prompt overlay
   let rotateOverlay = null;
@@ -48,24 +55,44 @@ export function createCanvas(container) {
     return el;
   }
 
+  function readSafeArea() {
+    const style = getComputedStyle(document.documentElement);
+    const top = parseInt(style.getPropertyValue('--sat')) || 0;
+    const bottom = parseInt(style.getPropertyValue('--sab')) || 0;
+    return { top, bottom };
+  }
+
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 3); // cap at 3x
-    const w = container.clientWidth || window.innerWidth;
-    const h = container.clientHeight || window.innerHeight;
+    const cssW = container.clientWidth || window.innerWidth;
+    const cssH = container.clientHeight || window.innerHeight;
 
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // FIXED_WIDTH scaling: game always sees width = DESIGN_WIDTH
+    const scale = cssW / DESIGN_WIDTH;
+    const designH = cssH / scale;
 
-    state.width = w;
-    state.height = h;
+    // Combined DPR + game scaling in one transform
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+
+    // Safe area in design coordinates
+    const sa = readSafeArea();
+
+    state.width = DESIGN_WIDTH;   // game sees fixed width
+    state.height = designH;       // game sees variable height
     state.dpr = dpr;
+    state.scale = scale;
+    state.cssW = cssW;
+    state.cssH = cssH;
+    state.safeTop = sa.top / scale;
+    state.safeBottom = sa.bottom / scale;
 
     // Portrait lock: show overlay when landscape
-    const isLandscape = w > h && w > 500;
+    const isLandscape = cssW > cssH && cssW > 500;
     if (isLandscape) {
       if (!rotateOverlay) rotateOverlay = createRotateOverlay();
       rotateOverlay.style.display = 'flex';
@@ -77,7 +104,6 @@ export function createCanvas(container) {
   resize();
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => {
-    // Small delay lets the browser settle on new dimensions
     setTimeout(resize, 150);
   });
 
@@ -159,13 +185,15 @@ export function createGameLoop(updateFn, renderFn) {
 // ─── 3. Touch Controls ──────────────────────────────────────────────────────
 
 /**
- * Convert a touch/pointer event to CSS-pixel canvas coordinates.
+ * Convert a touch/pointer event to design-resolution coordinates.
+ * Uses the canvas's current CSS size and DESIGN_WIDTH to compute scale.
  */
 function touchToCanvas(canvas, touch) {
   const rect = canvas.getBoundingClientRect();
+  const scale = rect.width / DESIGN_WIDTH;
   return {
-    x: touch.clientX - rect.left,
-    y: touch.clientY - rect.top
+    x: (touch.clientX - rect.left) / scale,
+    y: (touch.clientY - rect.top) / scale
   };
 }
 

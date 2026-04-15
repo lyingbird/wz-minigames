@@ -292,12 +292,8 @@ const SONGS = [generateSong1(), generateSong2(), generateSong3()];
 const screen = createCanvas(document.getElementById('game'));
 const { canvas, ctx } = screen;
 let W = screen.width, H = screen.height;
-let safeTop = 0, safeBottom = 0;
-function updateSafeAreas() {
-  safeTop = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat')) || 0;
-  safeBottom = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sab')) || 0;
-}
-updateSafeAreas();
+let safeTop = screen.safeTop;
+let safeBottom = screen.safeBottom;
 const particles = createParticleSystem(500);
 const floatText = createFloatingText();
 let audio = null;
@@ -983,7 +979,8 @@ function handleResultsTap(x, y) {
 function update(dt) {
   W = screen.width;
   H = screen.height;
-  updateSafeAreas();
+  safeTop = screen.safeTop;
+  safeBottom = screen.safeBottom;
 
   particles.update(dt);
   floatText.update(dt);
