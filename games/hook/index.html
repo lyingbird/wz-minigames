@@ -134,10 +134,14 @@ async function init() {
   floatingText = createFloatingText();
 
   tapDetector = createTapDetector(screen.canvas);
-  tapDetector.onTap = handleTap;
+  tapDetector.onTap = (x, y) => {
+    window._lastTouchTime = Date.now();
+    handleTap(x, y);
+  };
 
-  // Also support mouse click for desktop testing
+  // Also support mouse click for desktop testing (with double-tap guard)
   screen.canvas.addEventListener('mousedown', (e) => {
+    if (window._lastTouchTime && Date.now() - window._lastTouchTime < 500) return;
     if (e.button === 0) {
       const rect = screen.canvas.getBoundingClientRect();
       handleTap(e.clientX - rect.left, e.clientY - rect.top);
@@ -185,7 +189,20 @@ async function init() {
 function handleTap(x, y) {
   W = screen.width; H = screen.height;
 
-  if (phase === Phase.TITLE || phase === Phase.GAMEOVER) {
+  if (phase === Phase.TITLE) {
+    if (x < 100 && y < 60) {
+      window.location.href = '../../index.html';
+      return;
+    }
+    startGame();
+    return;
+  }
+  if (phase === Phase.GAMEOVER) {
+    // Check lobby button (rendered at H*0.93)
+    if (y >= H * 0.90 && y <= H * 0.97 && x >= W / 2 - 80 && x <= W / 2 + 80) {
+      window.location.href = '../../index.html';
+      return;
+    }
     startGame();
     return;
   }
@@ -544,23 +561,23 @@ function processCapture(target) {
     // Bomb penalty
     const pts = Math.round(def.score * scoreMod);
     score = Math.max(0, score + pts);
-    floatingText.add(hookPivotX, hookPivotY + 20, `${pts}`, { color: COL_RED, size: 28, duration: 1.2 });
-    particles.emit(hookPivotX, hookPivotY, { count: 15, speed: 150, color: COL_RED, size: 5, life: 0.6 });
+    floatingText.add(target.x, target.y, `${pts}`, { color: COL_RED, size: 28, duration: 1.2 });
+    particles.emit(target.x, target.y, { count: 15, speed: 150, color: COL_RED, size: 5, life: 0.6 });
     if (audio) audio.playDeath();
   } else if (target.type === T_TREASURE) {
     // Bonus time
     const bonus = 5;
     roundTimer += bonus;
     bonusTimeAdded += bonus;
-    floatingText.add(hookPivotX, hookPivotY + 20, `+${bonus}秒!`, { color: '#00FF88', size: 28, duration: 1.5 });
-    particles.emit(hookPivotX, hookPivotY, { count: 20, speed: 120, color: '#FFD700', size: 4, life: 0.8 });
+    floatingText.add(target.x, target.y, `+${bonus}秒!`, { color: '#00FF88', size: 28, duration: 1.5 });
+    particles.emit(target.x, target.y, { count: 20, speed: 120, color: '#FFD700', size: 4, life: 0.8 });
     if (audio) audio.playScore();
   } else {
     // Score points
     const pts = Math.round(def.score * scoreMod);
     score += pts;
-    floatingText.add(hookPivotX, hookPivotY + 20, `+${pts}`, { color: COL_GOLD, size: 26, duration: 1 });
-    particles.emit(hookPivotX, hookPivotY, { count: 12, speed: 100, color: COL_GOLD, size: 4, life: 0.7 });
+    floatingText.add(target.x, target.y, `+${pts}`, { color: COL_GOLD, size: 26, duration: 1 });
+    particles.emit(target.x, target.y, { count: 12, speed: 100, color: COL_GOLD, size: 4, life: 0.7 });
     if (audio) audio.playScore();
   }
 
@@ -1067,6 +1084,13 @@ function drawTitleScreen() {
   ctx.fillRect(0, 0, W, H);
   ctx.globalAlpha = 1;
 
+  // Back button
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = COL_GOLD;
+  ctx.fillText('\u2190 \u8FD4\u56DE', 20, 40);
+
   const centerY = H * 0.42;
 
   // Title
@@ -1310,6 +1334,13 @@ function drawGameOver() {
   ctx.textBaseline = 'middle';
   ctx.fillText('再来一局', 0, 0);
   ctx.restore();
+
+  // Lobby button
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(212,168,75,0.7)';
+  ctx.fillText('\u8FD4\u56DE\u5927\u5385', cx, H * 0.93);
 
   ctx.restore();
 }

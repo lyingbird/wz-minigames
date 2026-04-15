@@ -551,7 +551,8 @@ function setupTouchHandlers() {
 
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    // Resume audio context on first touch
+    // Init audio on first touch
+    if (!audio) { try { audio = initAudio(); } catch(e2) { console.warn('Audio init failed:', e2); } }
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     if (audio && audio.context && audio.context.state === 'suspended') audio.context.resume();
 
@@ -625,6 +626,7 @@ function setupTouchHandlers() {
   let mouseDown = false;
   let mouseLane = -1;
   canvas.addEventListener('mousedown', (e) => {
+    if (!audio) { try { audio = initAudio(); } catch(e2) { console.warn('Audio init failed:', e2); } }
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     if (audio && audio.context && audio.context.state === 'suspended') audio.context.resume();
     const rect = canvas.getBoundingClientRect();
@@ -830,6 +832,11 @@ function processAutoMiss(dt) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function handleTitleTap(x, y) {
+  // Back button
+  if (x < 100 && y < 60) {
+    window.location.href = '../../index.html';
+    return;
+  }
   // Song selection buttons
   const btnWidth = W * 0.7;
   const btnHeight = H * 0.09;
@@ -951,6 +958,13 @@ function handleResultsTap(x, y) {
   const backX = W / 2 + gap / 2;
   if (x >= backX && x <= backX + btnW && y >= baseY && y <= baseY + btnH) {
     state = S_TITLE;
+    return;
+  }
+
+  // Lobby button
+  const lobbyY = baseY + btnH + H * 0.02;
+  if (y >= lobbyY && y <= lobbyY + H * 0.05 && x >= W / 2 - 80 && x <= W / 2 + 80) {
+    window.location.href = '../../index.html';
     return;
   }
 }
@@ -1094,6 +1108,15 @@ function renderLoading() {
 
 function renderTitle() {
   const cx = W / 2;
+
+  // Back button
+  ctx.save();
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#D4A84B';
+  ctx.fillText('\u2190 \u8FD4\u56DE', 20, 40);
+  ctx.restore();
 
   // Avatar
   const avatar = getAvatarImage(LIBAI);
@@ -1750,6 +1773,12 @@ function renderResults() {
   ctx.font = `bold ${W * 0.035}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.fillText('返回', backX + btnW / 2, btnY + btnH * 0.55);
+
+  // Lobby button
+  ctx.font = `bold ${W * 0.03}px sans-serif`;
+  ctx.fillStyle = 'rgba(212,168,75,0.7)';
+  ctx.textAlign = 'center';
+  ctx.fillText('\u8FD4\u56DE\u5927\u5385', cx, btnY + btnH + H * 0.04);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1767,12 +1796,7 @@ async function init() {
 
   season = getCurrentSeason();
 
-  // Init audio
-  try {
-    audio = initAudio();
-  } catch (e) {
-    console.warn('Audio init failed:', e);
-  }
+  // Audio init deferred to first user interaction (touch/click)
 
   // Start game loop
   const loop = createGameLoop(update, render);

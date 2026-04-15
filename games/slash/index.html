@@ -76,6 +76,7 @@ let btnClassic={x:0,y:0,w:0,h:0};
 let btnSurvival={x:0,y:0,w:0,h:0};
 let btnReplay={x:0,y:0,w:0,h:0};
 let btnEnergy={x:0,y:0,w:0,h:0};
+let btnLobby={x:0,y:0,w:0,h:0};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // INITIALIZATION
@@ -385,6 +386,10 @@ function createSplitHalves(target,swipePts){
 // ══════════════════════════════════════════════════════════════════════════════
 function handleTap(x,y){
   if(state===S_TITLE){
+    if(x<100&&y<60){
+      window.location.href='../../index.html';
+      return;
+    }
     if(pointInBtn(x,y,btnClassic)){
       mode='classic';totalTime=60;lives=3;
       startGame();
@@ -395,6 +400,9 @@ function handleTap(x,y){
   }else if(state===S_GAMEOVER){
     if(pointInBtn(x,y,btnReplay)){
       state=S_TITLE;
+    }else if(pointInBtn(x,y,btnLobby)){
+      window.location.href='../../index.html';
+      return;
     }
   }else if(state===S_PLAYING){
     // Check energy bar tap
@@ -634,6 +642,15 @@ function render(){
 // ── TITLE SCREEN ──────────────────────────────────────────────
 function renderTitle(){
   const cx=W/2;
+
+  // Back button
+  ctx.save();
+  ctx.font='bold 16px sans-serif';
+  ctx.textAlign='left';
+  ctx.textBaseline='middle';
+  ctx.fillStyle=COLORS.GOLD;
+  ctx.fillText('\u2190 \u8FD4\u56DE',20,40);
+  ctx.restore();
 
   // Lan Ling Wang avatar
   const avatar=getAvatarImage(LLW);
@@ -1209,6 +1226,14 @@ function renderGameOver(){
   ctx.fillStyle=COLORS.GOLD;
   ctx.fillText('再来一局',cx,y+bh/2);
   ctx.restore();
+
+  // Lobby button
+  const lobbyY=y+bh+16;
+  btnLobby={x:cx-bw/2,y:lobbyY,w:bw,h:bh};
+  ctx.font='bold 14px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillStyle='rgba(212,168,75,0.7)';
+  ctx.fillText('\u8FD4\u56DE\u5927\u5385',cx,lobbyY+bh/2);
 
   ctx.restore();
 }

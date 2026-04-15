@@ -124,7 +124,20 @@ export function createGameLoop(updateFn, renderFn) {
     renderFn();
   }
 
-  return {
+  // Auto-pause on tab/app switch
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && running && !paused) {
+      paused = true;
+      loop._autoPaused = true;
+    } else if (!document.hidden && loop._autoPaused) {
+      paused = false;
+      lastTime = 0; // prevent dt spike
+      loop._autoPaused = false;
+    }
+  });
+
+  const loop = {
+    _autoPaused: false,
     start() {
       if (running) return;
       running = true;
@@ -140,6 +153,7 @@ export function createGameLoop(updateFn, renderFn) {
     get isPaused() { return paused; },
     get fps() { return fps; }
   };
+  return loop;
 }
 
 // ─── 3. Touch Controls ──────────────────────────────────────────────────────

@@ -232,8 +232,8 @@ function renderGameCards() {
 
     const skinUrl = getSkinUrl(game.hero, 1);
     const avatarUrl = getAvatarUrl(game.hero);
-    const best = getPersonalBest(game.id);
-    const bestText = best !== null ? `最高分 <span>${formatNum(best)}</span>` : '尚未挑战';
+    const bestEntry = getPersonalBest(game.id);
+    const bestText = bestEntry !== null ? `最高分 <span>${formatNum(bestEntry.score)}</span>` : '尚未挑战';
 
     card.innerHTML = `
       <div class="card-bg" style="background-image:url('${skinUrl}')"></div>
@@ -253,13 +253,13 @@ function renderBestScores() {
   let html = '';
 
   GAMES.forEach((game, i) => {
-    const best = getPersonalBest(game.id);
+    const bestEntry2 = getPersonalBest(game.id);
     const rankClass = i < 3 ? ` top${i + 1}` : '';
     html += `
       <div class="lb-row">
         <div class="lb-rank${rankClass}">${i + 1}</div>
         <div class="lb-game">${game.title}</div>
-        <div class="lb-score">${best !== null ? formatNum(best) : '—'}</div>
+        <div class="lb-score">${bestEntry2 !== null ? formatNum(bestEntry2.score) : '—'}</div>
       </div>
     `;
   });

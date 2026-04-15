@@ -59,7 +59,7 @@ let fateTimer=0,fateActive=false,fateX=0,fateY=0,fateDuration=0,fateCollected=fa
 // Bullet pool
 const bulletPool=createPool(
   ()=>({x:0,y:0,vx:0,vy:0,radius:7,type:0,active:false,age:0,trail:[],homingAngle:0}),
-  (b)=>{b.active=false;b.age=0;b.trail.length=0;b.type=0;b.homingAngle=0;},
+  (b)=>{b.active=false;b.age=0;b.trail.length=0;b.type=0;b.homingAngle=0;b._grazed=false;},
   300
 );
 
@@ -88,7 +88,14 @@ async function init(){
   tapDetector=createTapDetector(screen.canvas);
   tapDetector.onTap=(x,y)=>{
     W=screen.width;H=screen.height;
-    if(state===State.TITLE||state===State.GAMEOVER){
+    if(state===State.TITLE){
+      if(x<100&&y<60){window.location.href='../../index.html';return;}
+      startGame();
+    }else if(state===State.GAMEOVER){
+      // Check lobby button at bottom of screen (rendered at H*0.93)
+      if(y>=H*0.90&&y<=H*0.97&&x>=W/2-80&&x<=W/2+80){
+        window.location.href='../../index.html';return;
+      }
       startGame();
     }else if(state===State.PLAYING){
       // Right-side tap = dash
@@ -892,6 +899,13 @@ function drawTitle(){
   ctx.save();
   const cy=H*0.3;
 
+  // Back button
+  ctx.font='bold 16px sans-serif';
+  ctx.textAlign='left';
+  ctx.textBaseline='middle';
+  ctx.fillStyle=COLORS.GOLD;
+  ctx.fillText('\u2190 \u8FD4\u56DE',20,40);
+
   // Avatar
   const avatar=getAvatarImage(GAME_HEROES.DIAOCHAN);
   if(avatar){
@@ -1027,6 +1041,12 @@ function drawGameOver(){
   ctx.textAlign='center';
   ctx.fillStyle='#fff';
   ctx.fillText('再来一局',W/2,retryY);
+  ctx.globalAlpha=1;
+
+  // Lobby button
+  ctx.font='bold 14px sans-serif';
+  ctx.fillStyle='rgba(212,168,75,0.7)';
+  ctx.fillText('\u8FD4\u56DE\u5927\u5385',W/2,H*0.93);
 
   ctx.restore();
 }
