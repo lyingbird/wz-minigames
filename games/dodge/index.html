@@ -30,7 +30,8 @@ let screen,ctx,W,H;
 const PLAYER_RADIUS=18;
 const PLAYER_SPEED=280;
 const DASH_DISTANCE=120;
-const GRAZE_RADIUS=PLAYER_RADIUS*1.5;
+// Dash dodge detection radius (how close bullets need to be during dash to count)
+const DASH_DETECT_RADIUS=PLAYER_RADIUS*3;
 const FATE_RADIUS=55;
 const MARGIN=15;
 const DASH_DURATION=0.3;
@@ -49,7 +50,11 @@ let idleTime=0;
 let afterimages=[];
 
 // Game
-let gameTime=0,score=0,grazeCount=0,grazeCombo=0,grazeComboTimer=0;
+let gameTime=0,score=0;
+// Wave & density scoring
+let waveNum=0,lastWaveTime=0;
+let survivalCombo=0,lastDashTime=0,noDashTimer=0;
+let dashDodgeCount=0; // bullets near player during dash
 let countdownVal=3,countdownTimer=0;
 let dyingTimer=0;
 let screenFlash=0;
@@ -142,7 +147,7 @@ function resetGame(){
   dashing=false;dashTimer=0;dashCooldown=0;
   invincible=false;invTimer=0;idleTime=0;
   afterimages=[];
-  gameTime=0;score=0;grazeCount=0;grazeCombo=0;grazeComboTimer=0;
+  gameTime=0;score=0;waveNum=0;lastWaveTime=0;survivalCombo=0;noDashTimer=0;dashDodgeCount=0;
   screenFlash=0;edgeFlash=0;
   fateTimer=0;fateActive=false;fateCollected=false;
   bulletPool.releaseAll();
@@ -285,12 +290,29 @@ function update(dt){
   if(state!==State.PLAYING)return;
 
   gameTime+=dt;
-  score+=10*dt;
 
-  // Graze combo decay
-  if(grazeComboTimer>0){
-    grazeComboTimer-=dt;
-    if(grazeComboTimer<=0)grazeCombo=0;
+  // ── Density-based scoring: more bullets on screen = higher multiplier ──
+  let activeBullets=0;
+  bulletPool.forEach(()=>activeBullets++);
+  const densityMult=Math.min(3,1+activeBullets/20);
+
+  // Survival combo: builds while not using dash
+  noDashTimer+=dt;
+  if(noDashTimer>=10){noDashTimer-=10;survivalCombo=Math.min(survivalCombo+1,3);}
+  const comboMult=[1,1.2,1.5,2.0][survivalCombo];
+
+  // Time score increases with time survived
+  const timeRate=10+Math.floor(gameTime/10);
+  score+=timeRate*densityMult*comboMult*dt;
+
+  // Wave bonus every 15 seconds
+  if(gameTime-lastWaveTime>=15){
+    lastWaveTime=gameTime;
+    waveNum++;
+    const waveBonus=100*waveNum;
+    score+=waveBonus;
+    floatingText.add(W/2,H*0.3,`波次 ${waveNum}! +${waveBonus}`,{color:COLORS.GOLD,size:22,duration:1.2});
+    if(audio)audio.playScore();
   }
 
   // Screen flash decay
@@ -308,7 +330,20 @@ function update(dt){
     py+=dashDirY*dashSpeed*dt;
     // Afterimage
     afterimages.push({x:px,y:py,alpha:0.6,timer:0.25});
-    if(dashTimer<=0){dashing=false;}
+    if(dashTimer<=0){
+      dashing=false;
+      // Reward for dashing through bullets
+      if(dashDodgeCount>=3){
+        const dashBonus=50*dashDodgeCount;
+        score+=dashBonus;
+        floatingText.add(px,py-PLAYER_RADIUS-15,`闪避! +${dashBonus}`,{color:'#fff',size:20,duration:0.8});
+        screenFlash=0.3;
+        if(audio)audio.playGraze();
+      }
+      dashDodgeCount=0;
+      // Using dash resets survival combo
+      survivalCombo=0;noDashTimer=0;
+    }
   }
 
   // Invincibility timer
@@ -472,20 +507,10 @@ function update(dt){
 
     const dist=Math.sqrt(distSq);
     const hitDist=PLAYER_RADIUS+b.radius-4;// slightly forgiving
-    const grazeDist=GRAZE_RADIUS+b.radius;
-
-    // Graze check
-    if(dist<grazeDist&&dist>hitDist&&!b._grazed){
+    // Skill dash dodge: count bullets near player during dash (invincible)
+    if(dashing&&dist<DASH_DETECT_RADIUS+b.radius&&!b._grazed){
       b._grazed=true;
-      grazeCount++;
-      grazeCombo++;
-      grazeComboTimer=1.5;
-      const bonus=50+Math.min(grazeCombo-1,10)*25;
-      score+=bonus;
-      floatingText.add(px,py-PLAYER_RADIUS-15,`+${bonus}`,{color:'#fff',size:18,duration:0.7});
-      screenFlash=0.3;
-      edgeFlash=0.5;
-      if(audio)audio.playGraze();
+      dashDodgeCount++;
     }
 
     // Hit check
@@ -695,13 +720,13 @@ function drawPlayer(){
   }
   ctx.restore();
 
-  // Graze ring flash
-  if(grazeComboTimer>0){
+  // Survival combo glow
+  if(survivalCombo>0){
     ctx.save();
-    ctx.globalAlpha=grazeComboTimer/1.5*0.4;
+    ctx.globalAlpha=0.15+survivalCombo*0.08;
     ctx.beginPath();
-    ctx.arc(px,py,GRAZE_RADIUS+5,0,Math.PI*2);
-    ctx.strokeStyle='#fff';
+    ctx.arc(px,py,PLAYER_RADIUS+8+survivalCombo*3,0,Math.PI*2);
+    ctx.strokeStyle=COLORS.GOLD;
     ctx.lineWidth=1.5;
     ctx.stroke();
     ctx.restore();
@@ -858,11 +883,11 @@ function drawHUD(){
   ctx.textAlign='right';
   ctx.font=`${14}px sans-serif`;
   ctx.fillStyle='#aaa';
-  ctx.fillText(`擦弹 ${grazeCount}`,W-hudPad,hudTop);
-  if(grazeCombo>1){
+  ctx.fillText(`波次 ${waveNum}`,W-hudPad,hudTop);
+  if(survivalCombo>0){
     ctx.fillStyle='#fff';
     ctx.font=`bold ${14}px sans-serif`;
-    ctx.fillText(`×${grazeCombo}`,W-hudPad,hudTop+18);
+    ctx.fillText(`×${[1,1.2,1.5,2.0][survivalCombo]}`,W-hudPad,hudTop+18);
   }
   ctx.restore();
 }
@@ -1022,7 +1047,7 @@ function drawGameOver(){
 
   // Score breakdown
   const timeScore=Math.floor(gameTime)*10;
-  const grazeScore=Math.floor(score)-timeScore;
+  const waveBonus=waveNum*(waveNum+1)*50; // approximate wave bonus total
 
   ctx.font=`bold ${32}px sans-serif`;
   ctx.fillStyle=COLORS.GOLD;
@@ -1030,8 +1055,7 @@ function drawGameOver(){
 
   ctx.font=`${12}px sans-serif`;
   ctx.fillStyle='#777';
-  ctx.fillText(`时间得分 ${formatScore(timeScore)} + 擦弹得分 ${formatScore(Math.max(0,grazeScore))}`,W/2,cy+108);
-  ctx.fillText(`擦弹次数: ${grazeCount}`,W/2,cy+128);
+  ctx.fillText(`存活 ${Math.floor(gameTime)}秒 · 波次 ${waveNum} · 最高${[1,1.2,1.5,2.0][survivalCombo]}x连续倍率`,W/2,cy+108);
 
   // Leaderboard
   const board=getLeaderboard(GAME_ID);

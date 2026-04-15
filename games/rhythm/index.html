@@ -35,17 +35,17 @@ const N_TAP = 0, N_HOLD = 1;
 // Judgment thresholds (seconds)
 const J_PERFECT = 0.06, J_GREAT = 0.11, J_GOOD = 0.16;
 
-// Lane colors (hex + rgb components for easy alpha manipulation)
+// Lane colors
 const LANE_COLORS = ['#3498DB', '#2ECC71', '#F1C40F', '#E74C3C'];
 const LANE_RGB = ['52,152,219', '46,204,113', '241,196,15', '231,76,60'];
 const LANE_LABELS = ['普攻', '一技能', '二技能', '大招'];
 const LANE_GLOW = ['rgba(52,152,219,0.6)', 'rgba(46,204,113,0.6)', 'rgba(241,196,15,0.6)', 'rgba(231,76,60,0.6)'];
 
-// Judgment line position (fraction of screen height)
+// Judgment line position
 const JUDGE_Y_FRAC = 0.78;
 
-// Scroll speed: how many seconds of notes are visible on screen
-const SCROLL_WINDOW = 1.8; // seconds of lookahead
+// Scroll speed
+const SCROLL_WINDOW = 1.8;
 
 // Combo multiplier thresholds
 const COMBO_MULT = [[100, 4], [50, 3], [30, 2], [10, 1.5], [0, 1]];
@@ -54,70 +54,86 @@ const COMBO_MULT = [[100, 4], [50, 3], [30, 2], [10, 1.5], [0, 1]];
 const GRADES = [['S', 0.95], ['A', 0.85], ['B', 0.70], ['C', 0]];
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SONG DATA GENERATION
+// SONG DATA + NOTE CHART GENERATION
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Pentatonic scale notes (C pentatonic in various octaves)
-const PENTA = [261.63, 293.66, 329.63, 392.00, 440.00]; // C4 D4 E4 G4 A4
-const PENTA_LOW = PENTA.map(f => f / 2);
-const PENTA_HIGH = PENTA.map(f => f * 2);
-
-function generateSong1() {
-  // "剑气纵横" - Easy, BPM 100, 60s, ~60 notes
-  const bpm = 100, duration = 60;
+function generateEasyChart(bpm, duration) {
+  // ~60 notes in 60s, mainly on full beats, one lane at a time
   const beatLen = 60 / bpm;
   const notes = [];
-  // Simple quarter-note patterns, one lane at a time
-  // 4-bar phrases, each bar = 4 beats
-  const patterns = [
-    // phrase 1: single lane streams
-    [0, null, 1, null, 2, null, 3, null],
-    [0, 0, null, 1, 1, null, 2, 2],
-    [3, null, 2, null, 1, null, 0, null],
-    [null, 0, null, 1, null, 2, null, 3],
-    // phrase 2: alternating
-    [0, 2, 0, 2, 1, 3, 1, 3],
-    [0, null, null, 1, null, null, 2, null],
-    [3, 3, null, null, 2, 2, null, null],
-    [0, 1, 2, 3, null, null, null, null],
-    // phrase 3: slightly more dense
-    [0, null, 2, null, 0, null, 2, null],
-    [1, null, 3, null, 1, null, 3, null],
-    [0, 1, null, 2, 3, null, 0, null],
-    [null, null, 1, null, null, 3, null, null],
-    // phrase 4: closing
-    [0, 0, 1, 1, 2, 2, 3, 3],
-    [3, 2, 1, 0, null, null, null, null],
-    [0, null, null, null, 2, null, null, null],
+
+  // Musical patterns: groups of notes stepping across lanes with breathing room
+  const phrases = [
+    // Ascending steps
+    { lanes: [0, 1, 2, 3], spacing: 1, repeat: 2 },
+    // Descending steps
+    { lanes: [3, 2, 1, 0], spacing: 1, repeat: 2 },
+    // Breathing room (rest)
+    { lanes: [], spacing: 0, repeat: 4 },
+    // Alternating pairs
+    { lanes: [0, 2, 0, 2], spacing: 1, repeat: 1 },
+    { lanes: [1, 3, 1, 3], spacing: 1, repeat: 1 },
+    // Rest
+    { lanes: [], spacing: 0, repeat: 4 },
+    // Call and response
+    { lanes: [0, null, 1, null], spacing: 1, repeat: 2 },
+    { lanes: [2, null, 3, null], spacing: 1, repeat: 2 },
+    // Rest
+    { lanes: [], spacing: 0, repeat: 2 },
+    // Steady quarter notes center lanes
+    { lanes: [1, 2, 1, 2, 1, 2, 1, 2], spacing: 1, repeat: 1 },
+    // Rest
+    { lanes: [], spacing: 0, repeat: 4 },
+    // Build-up ascending fast
+    { lanes: [0, 1, 2, 3, 0, 1, 2, 3], spacing: 1, repeat: 1 },
+    // Rest
+    { lanes: [], spacing: 0, repeat: 2 },
+    // Final phrase
+    { lanes: [3, 2, 1, 0, 3, 2, 1, 0], spacing: 1, repeat: 1 },
+    { lanes: [0, 0, 2, 2], spacing: 1, repeat: 1 },
   ];
-  let beat = 2; // start after 2 beats
-  for (const pattern of patterns) {
-    for (const lane of pattern) {
-      if (lane !== null && beat * beatLen < duration - 2) {
-        notes.push({ time: beat * beatLen, lane, type: N_TAP });
+
+  let beat = 4; // start after 4 beats intro
+  for (const phrase of phrases) {
+    if (phrase.lanes.length === 0) {
+      beat += phrase.repeat;
+      continue;
+    }
+    for (let r = 0; r < phrase.repeat; r++) {
+      for (const lane of phrase.lanes) {
+        if (lane !== null && beat * beatLen < duration - 3) {
+          notes.push({ time: beat * beatLen, lane, type: N_TAP });
+        }
+        beat += phrase.spacing;
       }
-      beat++;
     }
   }
-  return {
-    id: 'song1', name: '剑气纵横', difficulty: 1, diffLabel: '简单',
-    bpm, duration, notes,
-    bassPattern: [0, 2, 4, 2], // indices into PENTA_LOW
-    bassRhythm: [0, 2], // beats within bar that bass plays
-  };
+
+  // If we haven't filled enough, add some more patterns
+  while (notes.length < 55 && beat * beatLen < duration - 3) {
+    const pattern = [0, 1, 2, 3];
+    for (const lane of pattern) {
+      if (beat * beatLen < duration - 3) {
+        notes.push({ time: beat * beatLen, lane, type: N_TAP });
+      }
+      beat += 1;
+    }
+    beat += 4; // rest
+  }
+
+  return notes;
 }
 
-function generateSong2() {
-  // "青莲剑仙" - Normal, BPM 120, 75s, ~120 notes
-  const bpm = 120, duration = 75;
+function generateNormalChart(bpm, duration) {
+  // ~130 notes in 75s, beats + half-beats, occasional doubles
   const beatLen = 60 / bpm;
   const notes = [];
-  let t = 1.5; // start time in seconds
 
-  // Helper to add notes
   function tap(lane, time) { if (time < duration - 2) notes.push({ time, lane, type: N_TAP }); }
   function hold(lane, time, dur) { if (time < duration - 2) notes.push({ time, lane, type: N_HOLD, holdDuration: dur }); }
   function doub(l1, l2, time) { tap(l1, time); tap(l2, time); }
+
+  let t = 2.0; // start time
 
   // Section A: quarter note streams (bars 1-8)
   for (let bar = 0; bar < 8; bar++) {
@@ -137,23 +153,22 @@ function generateSong2() {
     }
   }
 
-  // Section B: eighth notes + holds (bars 9-16)
-  t += 8 * 4 * beatLen;
+  // 2 bar rest
+  t += 8 * 4 * beatLen + 2 * 4 * beatLen;
+
+  // Section B: eighth notes + holds (bars 11-18)
   for (let bar = 0; bar < 8; bar++) {
     const base = t + bar * 4 * beatLen;
     if (bar % 4 === 0) {
-      // hold note
       hold(0, base, beatLen * 2);
       tap(2, base + beatLen * 2);
       tap(3, base + beatLen * 3);
     } else if (bar % 4 === 1) {
-      // eighth note burst
       for (let i = 0; i < 4; i++) {
         tap(i % 4, base + i * beatLen * 0.5);
       }
       tap(2, base + beatLen * 3);
     } else if (bar % 4 === 2) {
-      // doubles
       doub(0, 3, base);
       tap(1, base + beatLen);
       tap(2, base + beatLen * 2);
@@ -165,11 +180,12 @@ function generateSong2() {
     }
   }
 
-  // Section C: climax (bars 17-24)
-  t += 8 * 4 * beatLen;
+  // 1 bar rest
+  t += 8 * 4 * beatLen + 1 * 4 * beatLen;
+
+  // Section C: climax (bars 20-27)
   for (let bar = 0; bar < 8; bar++) {
     const base = t + bar * 4 * beatLen;
-    // faster patterns
     for (let i = 0; i < 6; i++) {
       const lane = [0, 1, 2, 3, 2, 1][i];
       tap(lane, base + i * beatLen * 0.5);
@@ -179,17 +195,11 @@ function generateSong2() {
     }
   }
 
-  return {
-    id: 'song2', name: '青莲剑仙', difficulty: 2, diffLabel: '普通',
-    bpm, duration, notes,
-    bassPattern: [0, 4, 2, 3],
-    bassRhythm: [0, 1, 2, 3],
-  };
+  return notes;
 }
 
-function generateSong3() {
-  // "将进酒" - Hard, BPM 140, 90s, ~200 notes
-  const bpm = 140, duration = 90;
+function generateHardChart(bpm, duration) {
+  // ~200 notes in 90s, beats + half + quarter beats, frequent doubles, holds
   const beatLen = 60 / bpm;
   const notes = [];
 
@@ -199,14 +209,13 @@ function generateSong3() {
 
   let t = 1.0;
 
-  // Section A: warm-up (8 bars) - quarter + eighth
+  // Section A: warm-up (8 bars)
   for (let bar = 0; bar < 8; bar++) {
     const base = t + bar * 4 * beatLen;
     const lanes = [0, 1, 2, 3];
     for (let i = 0; i < 4; i++) {
       tap(lanes[(bar + i) % 4], base + i * beatLen);
     }
-    // add eighth note pickups
     if (bar >= 4) {
       tap((bar + 1) % 4, base + 3.5 * beatLen);
     }
@@ -256,11 +265,10 @@ function generateSong3() {
     }
   }
 
-  // Section D: Grand finale (8 bars) - everything
+  // Section D: Grand finale (8 bars)
   t += 8 * 4 * beatLen;
   for (let bar = 0; bar < 8 && t + bar * 4 * beatLen < duration - 3; bar++) {
     const base = t + bar * 4 * beatLen;
-    // Rapid-fire with doubles and syncopation
     for (let i = 0; i < 8; i++) {
       const lane = [0, 3, 1, 2, 3, 0, 2, 1][i];
       tap(lane, base + i * beatLen * 0.5);
@@ -270,87 +278,167 @@ function generateSong3() {
       doub(1, 3, base + beatLen * 2.25);
     }
     if (bar === 7) {
-      // Final chord
       doub(0, 3, base + beatLen * 3.75);
       doub(1, 2, base + beatLen * 3.75);
     }
   }
 
-  return {
-    id: 'song3', name: '将进酒', difficulty: 3, diffLabel: '困难',
-    bpm, duration, notes,
-    bassPattern: [0, 3, 4, 2, 1, 4, 3, 0],
-    bassRhythm: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5],
-  };
+  return notes;
 }
 
-const SONGS = [generateSong1(), generateSong2(), generateSong3()];
+const SONGS = [
+  {
+    id: 'song1',
+    title: '长安少年行',
+    subtitle: '李白主题曲',
+    difficulty: 1,
+    diffLabel: '简单',
+    bpm: 95,
+    duration: 60,
+    file: '../../assets/music/song1.mp3',
+    notes: null,
+  },
+  {
+    id: 'song2',
+    title: '凤求凰',
+    subtitle: '李白传说皮肤',
+    difficulty: 2,
+    diffLabel: '普通',
+    bpm: 120,
+    duration: 75,
+    file: '../../assets/music/song2.mp3',
+    notes: null,
+  },
+  {
+    id: 'song3',
+    title: '永远的长安城',
+    subtitle: '王者荣耀经典BGM',
+    difficulty: 3,
+    diffLabel: '困难',
+    bpm: 140,
+    duration: 90,
+    file: '../../assets/music/song3.mp3',
+    notes: null,
+  },
+];
+
+// Generate note charts
+SONGS[0].notes = generateEasyChart(SONGS[0].bpm, SONGS[0].duration);
+SONGS[0].name = SONGS[0].title;
+SONGS[1].notes = generateNormalChart(SONGS[1].bpm, SONGS[1].duration);
+SONGS[1].name = SONGS[1].title;
+SONGS[2].notes = generateHardChart(SONGS[2].bpm, SONGS[2].duration);
+SONGS[2].name = SONGS[2].title;
 
 // ══════════════════════════════════════════════════════════════════════════════
-// GLOBALS
-// ══════════════════════════════════════════════════════════════════════════════
-const screen = createCanvas(document.getElementById('game'));
-const { canvas, ctx } = screen;
-let W = screen.width, H = screen.height;
-let safeTop = screen.safeTop;
-let safeBottom = screen.safeBottom;
-const particles = createParticleSystem(500);
-const floatText = createFloatingText();
-let audio = null;
-let audioCtx = null; // Web Audio context for music synthesis
-
-// State
-let state = S_LOADING;
-let selectedSong = 0;
-let currentSong = null;
-let songTime = 0; // current playback time in seconds
-let songStartRealTime = 0; // AudioContext.currentTime when song started
-let isPaused = false;
-
-// Score
-let score = 0;
-let maxPossibleScore = 0;
-let combo = 0;
-let maxCombo = 0;
-let judgments = { perfect: 0, great: 0, good: 0, miss: 0 };
-
-// Active notes for gameplay
-let activeNotes = []; // the song's notes with state
-
-// Touch state per lane
-let laneTouched = [false, false, false, false];
-let laneFlash = [0, 0, 0, 0]; // flash timer per lane
-
-// Hold tracking per lane: { noteIndex, startTime }
-let laneHolds = [null, null, null, null];
-
-// Countdown
-let countdownTimer = 0;
-let countdownNum = 3;
-
-// Visual effects
-let judgmentDisplay = { text: '', color: '', timer: 0, x: 0 };
-let comboScale = 1;
-let swordFlashTimer = 0; // for 50+ combo sword slash effect
-let beatPulse = 0; // pulses on each beat
-let screenShake = 0;
-
-// Music synthesis nodes
-let musicNodes = null;
-let musicScheduler = null;
-
-// Title animation
-let titleTime = 0;
-let titleSelectedSong = 0;
-
-// Season
-let season = null;
-
-// ══════════════════════════════════════════════════════════════════════════════
-// MUSIC SYNTHESIS ENGINE
+// AUDIO SYSTEM: MP3 Loading + Synth Fallback
 // ══════════════════════════════════════════════════════════════════════════════
 
-function createMusicEngine(actx, song) {
+// Cached decoded AudioBuffers per song id
+const audioBufferCache = {};
+// Track which songs have MP3 available
+const songMp3Status = {}; // 'loading' | 'loaded' | 'missing' | 'error'
+// Loading progress per song (0..1)
+const songLoadProgress = {};
+
+// The AudioContext for music playback
+let musicCtx = null;
+// Current playing source node
+let musicSourceNode = null;
+let musicGainNode = null;
+let musicStartCtxTime = 0;
+let musicPauseOffset = 0;
+let usingSynth = false;
+
+// Synthesized music engine (fallback)
+const PENTA = [261.63, 293.66, 329.63, 392.00, 440.00];
+const PENTA_LOW = PENTA.map(f => f / 2);
+const PENTA_HIGH = PENTA.map(f => f * 2);
+
+function getMusicContext() {
+  if (!musicCtx) {
+    musicCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return musicCtx;
+}
+
+async function loadSongAudio(song) {
+  if (audioBufferCache[song.id]) {
+    songMp3Status[song.id] = 'loaded';
+    return audioBufferCache[song.id];
+  }
+  if (songMp3Status[song.id] === 'loading') return null;
+
+  songMp3Status[song.id] = 'loading';
+  songLoadProgress[song.id] = 0;
+
+  try {
+    const response = await fetch(song.file);
+    if (!response.ok) {
+      songMp3Status[song.id] = 'missing';
+      return null;
+    }
+
+    const contentLength = response.headers.get('Content-Length');
+    const total = contentLength ? parseInt(contentLength, 10) : 0;
+    const reader = response.body.getReader();
+    const chunks = [];
+    let received = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      songLoadProgress[song.id] = total > 0 ? received / total : 0.5;
+    }
+
+    // Combine chunks
+    const allBytes = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      allBytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    songLoadProgress[song.id] = 0.9;
+
+    // Decode
+    const ctx = getMusicContext();
+    const audioBuffer = await ctx.decodeAudioData(allBytes.buffer);
+    audioBufferCache[song.id] = audioBuffer;
+    songMp3Status[song.id] = 'loaded';
+    songLoadProgress[song.id] = 1;
+
+    // Update song duration to match actual audio length
+    song.duration = audioBuffer.duration;
+
+    return audioBuffer;
+  } catch (err) {
+    console.warn(`Failed to load ${song.file}:`, err);
+    songMp3Status[song.id] = 'error';
+    return null;
+  }
+}
+
+function stopMusic() {
+  if (musicSourceNode) {
+    try { musicSourceNode.onended = null; musicSourceNode.stop(); } catch(_) {}
+    musicSourceNode = null;
+  }
+  if (synthEngine) {
+    synthEngine.stop();
+    synthEngine = null;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SYNTHESIZED MUSIC FALLBACK ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+
+let synthEngine = null;
+
+function createSynthEngine(actx, song) {
   const masterGain = actx.createGain();
   masterGain.gain.value = 0.3;
   masterGain.connect(actx.destination);
@@ -362,7 +450,6 @@ function createMusicEngine(actx, song) {
   let currentBeat = 0;
   let isPlaying = false;
 
-  // Kick drum: low sine burst
   function scheduleKick(time) {
     const osc = actx.createOscillator();
     osc.type = 'sine';
@@ -376,7 +463,6 @@ function createMusicEngine(actx, song) {
     osc.stop(time + 0.15);
   }
 
-  // Hi-hat: noise burst
   function scheduleHihat(time) {
     const bufLen = Math.floor(actx.sampleRate * 0.05);
     const buf = actx.createBuffer(1, bufLen, actx.sampleRate);
@@ -395,9 +481,7 @@ function createMusicEngine(actx, song) {
     src.stop(time + 0.05);
   }
 
-  // Snare
   function scheduleSnare(time) {
-    // Noise part
     const bufLen = Math.floor(actx.sampleRate * 0.1);
     const buf = actx.createBuffer(1, bufLen, actx.sampleRate);
     const data = buf.getChannelData(0);
@@ -415,7 +499,6 @@ function createMusicEngine(actx, song) {
     src.start(time);
     src.stop(time + 0.1);
 
-    // Tonal part
     const osc = actx.createOscillator();
     osc.type = 'triangle';
     osc.frequency.setValueAtTime(200, time);
@@ -428,7 +511,6 @@ function createMusicEngine(actx, song) {
     osc.stop(time + 0.08);
   }
 
-  // Bass note
   function scheduleBass(time, noteIndex) {
     const freq = PENTA_LOW[noteIndex % PENTA_LOW.length];
     const osc = actx.createOscillator();
@@ -443,7 +525,6 @@ function createMusicEngine(actx, song) {
     osc.stop(time + beatLen);
   }
 
-  // Melody - simple arpeggiated pentatonic
   function scheduleMelody(time, beat) {
     const melodyPatterns = [
       [0, 2, 4, 2],
@@ -469,77 +550,135 @@ function createMusicEngine(actx, song) {
     osc.stop(time + beatLen * 0.75);
   }
 
+  // Bass/melody patterns per difficulty
+  const bassPattern = song.difficulty === 3 ? [0, 3, 4, 2, 1, 4, 3, 0]
+    : song.difficulty === 2 ? [0, 4, 2, 3] : [0, 2, 4, 2];
+  const bassRhythm = song.difficulty === 3 ? [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5]
+    : song.difficulty === 2 ? [0, 1, 2, 3] : [0, 2];
+
   function scheduleBeats() {
-    // Schedule ahead by 0.2 seconds
     while (nextBeatTime < actx.currentTime + 0.2) {
       const beatInBar = currentBeat % 4;
 
-      // Kick on beats 0, 2
-      if (beatInBar === 0 || beatInBar === 2) {
-        scheduleKick(nextBeatTime);
-      }
+      if (beatInBar === 0 || beatInBar === 2) scheduleKick(nextBeatTime);
+      if (beatInBar === 1 || beatInBar === 3) scheduleSnare(nextBeatTime);
 
-      // Snare on beats 1, 3
-      if (beatInBar === 1 || beatInBar === 3) {
-        scheduleSnare(nextBeatTime);
-      }
-
-      // Hi-hat on every beat
       scheduleHihat(nextBeatTime);
-      // Hi-hat on off-beats too for faster songs
-      if (bpm >= 120) {
-        scheduleHihat(nextBeatTime + beatLen * 0.5);
+      if (bpm >= 120) scheduleHihat(nextBeatTime + beatLen * 0.5);
+
+      if (bassRhythm.includes(beatInBar)) {
+        scheduleBass(nextBeatTime, bassPattern[currentBeat % bassPattern.length]);
       }
 
-      // Bass line
-      if (song.bassRhythm.includes(beatInBar)) {
-        const bassIdx = song.bassPattern[currentBeat % song.bassPattern.length];
-        scheduleBass(nextBeatTime, bassIdx);
-      }
+      if (song.difficulty >= 1) scheduleMelody(nextBeatTime, currentBeat);
 
-      // Melody (plays every beat on normal/hard)
-      if (song.difficulty >= 1) {
-        scheduleMelody(nextBeatTime, currentBeat);
-      }
-
-      // Track beat pulse for visual
-      const songT = nextBeatTime - songStartRealTime;
-      if (songT >= 0) {
-        beatPulse = 1;
-      }
+      // Beat pulse visual
+      const songT = nextBeatTime - musicStartCtxTime;
+      if (songT >= 0) beatPulse = 1;
 
       nextBeatTime += beatLen;
       currentBeat++;
+
+      // Stop if we've exceeded song duration
+      if ((nextBeatTime - musicStartCtxTime) > song.duration + 2) {
+        stop();
+        return;
+      }
+    }
+  }
+
+  function stop() {
+    isPlaying = false;
+    if (schedulerInterval) {
+      clearInterval(schedulerInterval);
+      schedulerInterval = null;
     }
   }
 
   return {
     start(startTime) {
       isPlaying = true;
-      songStartRealTime = startTime;
+      musicStartCtxTime = startTime;
       nextBeatTime = startTime;
       currentBeat = 0;
       schedulerInterval = setInterval(scheduleBeats, 50);
       scheduleBeats();
     },
-    stop() {
-      isPlaying = false;
-      if (schedulerInterval) {
-        clearInterval(schedulerInterval);
-        schedulerInterval = null;
-      }
-    },
+    stop,
     get isPlaying() { return isPlaying; },
     masterGain,
   };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// GLOBALS
+// ══════════════════════════════════════════════════════════════════════════════
+const screen = createCanvas(document.getElementById('game'));
+const { canvas, ctx } = screen;
+let W = screen.width, H = screen.height;
+let safeTop = screen.safeTop;
+let safeBottom = screen.safeBottom;
+const particles = createParticleSystem(500);
+const floatText = createFloatingText();
+let audio = null;
+
+// State
+let state = S_LOADING;
+let selectedSong = 0;
+let currentSong = null;
+let songTime = 0;
+let songStartRealTime = 0;
+let isPaused = false;
+
+// Score
+let score = 0;
+let maxPossibleScore = 0;
+let combo = 0;
+let maxCombo = 0;
+let judgments = { perfect: 0, great: 0, good: 0, miss: 0 };
+
+// Active notes for gameplay
+let activeNotes = [];
+
+// Touch state per lane
+let laneTouched = [false, false, false, false];
+let laneFlash = [0, 0, 0, 0];
+
+// Hold tracking per lane
+let laneHolds = [null, null, null, null];
+
+// Countdown
+let countdownTimer = 0;
+let countdownNum = 3;
+
+// Visual effects
+let judgmentDisplay = { text: '', color: '', timer: 0, x: 0 };
+let comboScale = 1;
+let swordFlashTimer = 0;
+let beatPulse = 0;
+let screenShake = 0;
+
+// Title animation
+let titleTime = 0;
+let titleSelectedSong = 0;
+
+// Season
+let season = null;
+
+// Loading state
+let loadingMessage = '加载中...';
+let overallLoadProgress = 0;
+
+// Song info modal (for missing MP3 prompt)
+let showMissingPrompt = false;
+let missingPromptSong = null;
+
+// ══════════════════════════════════════════════════════════════════════════════
 // TOUCH HANDLING
 // ══════════════════════════════════════════════════════════════════════════════
 
 function setupTouchHandlers() {
-  const activeTouches = new Map(); // touchId -> lane
+  const activeTouches = new Map();
 
   function getLane(x) {
     const laneWidth = W / 4;
@@ -554,9 +693,9 @@ function setupTouchHandlers() {
 
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    // Init audio on first touch
     if (!audio) { try { audio = initAudio(); } catch(e2) { console.warn('Audio init failed:', e2); } }
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    const mctx = getMusicContext();
+    if (mctx.state === 'suspended') mctx.resume();
     if (audio && audio.context && audio.context.state === 'suspended') audio.context.resume();
 
     for (let i = 0; i < e.changedTouches.length; i++) {
@@ -586,7 +725,6 @@ function setupTouchHandlers() {
       const newLane = getLane(pos.x);
       const oldLane = activeTouches.get(touch.identifier);
       if (oldLane !== undefined && oldLane !== newLane) {
-        // Finger moved to a different lane
         laneTouched[oldLane] = false;
         if (laneHolds[oldLane] && laneHolds[oldLane].touchId === touch.identifier) {
           endHoldNote(oldLane);
@@ -630,7 +768,8 @@ function setupTouchHandlers() {
   let mouseLane = -1;
   canvas.addEventListener('mousedown', (e) => {
     if (!audio) { try { audio = initAudio(); } catch(e2) { console.warn('Audio init failed:', e2); } }
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    const mctx = getMusicContext();
+    if (mctx.state === 'suspended') mctx.resume();
     if (audio && audio.context && audio.context.state === 'suspended') audio.context.resume();
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -681,7 +820,6 @@ function setupTouchHandlers() {
 function handleLanePress(lane, touchId) {
   if (state !== S_PLAYING) return;
 
-  // Find the closest unhit note in this lane within judgment window
   let bestNote = null;
   let bestDiff = Infinity;
 
@@ -716,19 +854,17 @@ function handleLanePress(lane, touchId) {
     color = '#2ECC71';
     audio && audio.playBeat(false);
   } else {
-    return; // too far
+    return;
   }
 
   bestNote.hit = true;
   bestNote.hitTime = songTime;
   bestNote.judgment = judgment;
 
-  // Combo
   combo++;
   if (combo > maxCombo) maxCombo = combo;
   comboScale = 1.4;
 
-  // Combo multiplier
   let mult = 1;
   for (const [threshold, m] of COMBO_MULT) {
     if (combo >= threshold) { mult = m; break; }
@@ -738,12 +874,10 @@ function handleLanePress(lane, touchId) {
   score += finalScore;
   judgments[judgment.toLowerCase()]++;
 
-  // Judgment display
   const laneX = (lane + 0.5) * (W / 4);
   const judgeY = H * JUDGE_Y_FRAC;
   judgmentDisplay = { text: judgment, color, timer: 0.6, x: laneX };
 
-  // Particle effects
   const particleCount = judgment === 'PERFECT' ? 20 : judgment === 'GREAT' ? 12 : 6;
   particles.emit(laneX, judgeY, {
     count: particleCount,
@@ -754,10 +888,8 @@ function handleLanePress(lane, touchId) {
     gravity: 200,
   });
 
-  // Floating score
   floatText.add(laneX, judgeY - 30, `+${finalScore}`, { color, size: 18, duration: 0.8 });
 
-  // Combo milestones
   if (combo === 50) {
     swordFlashTimer = 1.5;
     audio && audio.playCombo(5);
@@ -765,7 +897,6 @@ function handleLanePress(lane, touchId) {
     audio && audio.playCombo(Math.min(10, Math.floor(combo / 25)));
   }
 
-  // Hold note: start tracking
   if (bestNote.type === N_HOLD) {
     laneHolds[lane] = {
       noteIndex: activeNotes.indexOf(bestNote),
@@ -784,8 +915,6 @@ function endHoldNote(lane) {
   const note = activeNotes[hold.noteIndex];
   if (!note || note.type !== N_HOLD) return;
 
-  // Calculate hold bonus based on how long they held
-  const holdEnd = note.time + (note.holdDuration || 0);
   const heldRatio = Math.min(1, (songTime - hold.startTime) / ((note.holdDuration || 0.5)));
   const holdBonus = Math.round(50 * heldRatio);
 
@@ -801,7 +930,6 @@ function endHoldNote(lane) {
 }
 
 function processAutoMiss(dt) {
-  // Check for notes that have passed the judgment window
   for (const note of activeNotes) {
     if (note.hit || note.missed) continue;
     if (songTime - note.time > J_GOOD + 0.02) {
@@ -815,14 +943,12 @@ function processAutoMiss(dt) {
     }
   }
 
-  // Check hold notes being held
   for (let lane = 0; lane < 4; lane++) {
     if (laneHolds[lane]) {
       const note = activeNotes[laneHolds[lane].noteIndex];
       if (note) {
         const holdEnd = note.time + (note.holdDuration || 0);
         if (songTime >= holdEnd + 0.05) {
-          // Hold completed naturally
           endHoldNote(lane);
         }
       }
@@ -835,19 +961,24 @@ function processAutoMiss(dt) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 function handleTitleTap(x, y) {
-  if (audio) { audio.playBGM('rhythm'); audio.setBGMVolume(0.2); }
+  // Handle missing prompt modal first
+  if (showMissingPrompt) {
+    handleMissingPromptTap(x, y);
+    return;
+  }
+
   // Back button
   if (x < W * 0.25 && y < H * 0.08) {
-    if (audio) audio.stopBGM(0.3);
     window.location.href = '../../index.html';
     return;
   }
+
   // Song selection buttons
   const btnWidth = W * 0.7;
-  const btnHeight = H * 0.09;
+  const btnHeight = H * 0.1;
   const btnX = (W - btnWidth) / 2;
   const startY = H * 0.42;
-  const gap = btnHeight + H * 0.025;
+  const gap = btnHeight + H * 0.02;
 
   for (let i = 0; i < SONGS.length; i++) {
     const btnY = startY + i * gap;
@@ -860,13 +991,57 @@ function handleTitleTap(x, y) {
   const startBtnY = startY + 3 * gap + H * 0.01;
   const startBtnH = H * 0.07;
   if (x >= btnX && x <= btnX + btnWidth && y >= startBtnY && y <= startBtnY + startBtnH) {
-    startGame(titleSelectedSong);
+    const song = SONGS[titleSelectedSong];
+    const status = songMp3Status[song.id];
+    if (status === 'loaded') {
+      // MP3 available, start directly
+      startGame(titleSelectedSong, false);
+    } else if (status === 'missing' || status === 'error') {
+      // Show missing prompt
+      showMissingPrompt = true;
+      missingPromptSong = song;
+    } else {
+      // Not loaded yet (no status means never attempted or still loading), use synth
+      startGame(titleSelectedSong, true);
+    }
   }
 }
 
-function startGame(songIndex) {
+function handleMissingPromptTap(x, y) {
+  const modalW = W * 0.85;
+  const modalH = H * 0.42;
+  const modalX = (W - modalW) / 2;
+  const modalY = (H - modalH) / 2;
+
+  const btnW = modalW * 0.6;
+  const btnH = H * 0.05;
+  const btnX = (W - btnW) / 2;
+  const btn1Y = modalY + modalH * 0.58;
+  const btn2Y = modalY + modalH * 0.75;
+
+  // "Use synth" button
+  if (x >= btnX && x <= btnX + btnW && y >= btn1Y && y <= btn1Y + btnH) {
+    showMissingPrompt = false;
+    startGame(titleSelectedSong, true);
+    return;
+  }
+
+  // "Close" button
+  if (x >= btnX && x <= btnX + btnW && y >= btn2Y && y <= btn2Y + btnH) {
+    showMissingPrompt = false;
+    return;
+  }
+
+  // Click outside modal to close
+  if (x < modalX || x > modalX + modalW || y < modalY || y > modalY + modalH) {
+    showMissingPrompt = false;
+  }
+}
+
+function startGame(songIndex, forceSynth) {
   selectedSong = songIndex;
   currentSong = SONGS[songIndex];
+  usingSynth = forceSynth;
 
   // Reset state
   score = 0;
@@ -914,20 +1089,39 @@ function startPlaying() {
   state = S_PLAYING;
   songTime = -0.5; // small lead-in
 
-  // Stop BGM before rhythm game's own music starts
-  if (audio) audio.stopBGM(0.5);
+  const ctx = getMusicContext();
+  if (ctx.state === 'suspended') ctx.resume();
 
-  // Create audio context for music if needed
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  stopMusic();
+
+  if (!usingSynth && audioBufferCache[currentSong.id]) {
+    // Play MP3 using AudioBufferSourceNode
+    musicGainNode = ctx.createGain();
+    musicGainNode.gain.value = 0.5;
+    musicGainNode.connect(ctx.destination);
+
+    musicSourceNode = ctx.createBufferSource();
+    musicSourceNode.buffer = audioBufferCache[currentSong.id];
+    musicSourceNode.connect(musicGainNode);
+
+    musicStartCtxTime = ctx.currentTime + 0.5; // 0.5s lead-in
+    songStartRealTime = musicStartCtxTime;
+    musicSourceNode.start(musicStartCtxTime);
+
+    musicSourceNode.onended = () => {
+      if (state === S_PLAYING) {
+        // Give a small delay before showing results so last notes can be judged
+        setTimeout(() => { if (state === S_PLAYING) showResults(); }, 500);
+      }
+    };
+  } else {
+    // Use synth fallback
+    usingSynth = true;
+    songStartRealTime = ctx.currentTime + 0.5;
+    musicStartCtxTime = songStartRealTime;
+    synthEngine = createSynthEngine(ctx, currentSong);
+    synthEngine.start(songStartRealTime);
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-
-  // Start music
-  if (musicNodes) musicNodes.stop();
-  musicNodes = createMusicEngine(audioCtx, currentSong);
-  songStartRealTime = audioCtx.currentTime + 0.5; // 0.5s lead-in
-  musicNodes.start(songStartRealTime);
 
   audio && audio.playStart();
 }
@@ -938,19 +1132,11 @@ function startPlaying() {
 
 function showResults() {
   state = S_RESULTS;
-  if (musicNodes) { musicNodes.stop(); musicNodes = null; }
+  stopMusic();
 
-  // Calculate grade
   const scoreRatio = maxPossibleScore > 0 ? score / maxPossibleScore : 0;
-
-  // Save to leaderboard
-  const result = addScore(GAME_ID, score, LIBAI, '李白');
-
-  if (audio) {
-    audio.playBGM('rhythm');
-    audio.setBGMVolume(0.15);
-    if (result.rank === 1 && score > 0) { audio.playNewRecord(); } else { audio.playScore(); }
-  }
+  addScore(GAME_ID, score, LIBAI, '李白');
+  audio && audio.playScore();
 }
 
 function handleResultsTap(x, y) {
@@ -959,25 +1145,23 @@ function handleResultsTap(x, y) {
   const gap = W * 0.05;
   const baseY = H * 0.78;
 
-  // Retry button
+  // Retry
   const retryX = W / 2 - btnW - gap / 2;
   if (x >= retryX && x <= retryX + btnW && y >= baseY && y <= baseY + btnH) {
-    startGame(selectedSong);
+    startGame(selectedSong, usingSynth);
     return;
   }
 
-  // Back button
+  // Back
   const backX = W / 2 + gap / 2;
   if (x >= backX && x <= backX + btnW && y >= baseY && y <= baseY + btnH) {
-    if (audio) audio.setBGMVolume(0.2);
     state = S_TITLE;
     return;
   }
 
-  // Lobby button
+  // Lobby
   const lobbyY = baseY + btnH + H * 0.02;
   if (y >= lobbyY && y <= lobbyY + H * 0.05 && x >= W * 0.2 && x <= W * 0.8) {
-    if (audio) audio.stopBGM(0.3);
     window.location.href = '../../index.html';
     return;
   }
@@ -996,7 +1180,6 @@ function update(dt) {
   particles.update(dt);
   floatText.update(dt);
 
-  // Decay timers
   for (let i = 0; i < 4; i++) {
     if (laneFlash[i] > 0) laneFlash[i] = Math.max(0, laneFlash[i] - dt);
   }
@@ -1007,7 +1190,7 @@ function update(dt) {
   if (screenShake > 0) screenShake = Math.max(0, screenShake - dt * 2);
 
   if (state === S_LOADING) {
-    // Nothing — loading handled in init
+    // Loading handled in init
   } else if (state === S_TITLE) {
     titleTime += dt;
   } else if (state === S_COUNTDOWN) {
@@ -1023,10 +1206,18 @@ function update(dt) {
     }
   } else if (state === S_PLAYING) {
     // Update song time from AudioContext for precision
-    if (audioCtx) {
-      songTime = audioCtx.currentTime - songStartRealTime;
+    const mctx = getMusicContext();
+    if (mctx) {
+      songTime = mctx.currentTime - songStartRealTime;
     } else {
       songTime += dt;
+    }
+
+    // Beat pulse for synth mode (and MP3 mode based on BPM)
+    if (currentSong) {
+      const beatLen = 60 / currentSong.bpm;
+      const beatFrac = ((songTime % beatLen) + beatLen) % beatLen / beatLen;
+      if (beatFrac < 0.05) beatPulse = Math.max(beatPulse, 0.8);
     }
 
     processAutoMiss(dt);
@@ -1045,18 +1236,17 @@ function update(dt) {
 function render() {
   ctx.save();
 
-  // Screen shake
   if (screenShake > 0) {
     const shakeX = (Math.random() - 0.5) * screenShake * 20;
     const shakeY = (Math.random() - 0.5) * screenShake * 20;
     ctx.translate(shakeX, shakeY);
   }
 
-  // Background
   renderBackground();
 
   if (state === S_TITLE) {
     renderTitle();
+    if (showMissingPrompt) renderMissingPrompt();
   } else if (state === S_COUNTDOWN) {
     renderPlayfield();
     renderCountdown();
@@ -1079,7 +1269,6 @@ function render() {
 }
 
 function renderBackground() {
-  // Dark gradient
   const grad = ctx.createLinearGradient(0, 0, 0, H);
   grad.addColorStop(0, '#0a0a1a');
   grad.addColorStop(0.5, '#0f0f2a');
@@ -1087,7 +1276,6 @@ function renderBackground() {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
 
-  // Subtle vertical light rays
   ctx.save();
   ctx.globalAlpha = 0.03 + beatPulse * 0.02;
   for (let i = 0; i < 5; i++) {
@@ -1101,7 +1289,6 @@ function renderBackground() {
   }
   ctx.restore();
 
-  // Li Bai watermark in center (very faint)
   if (state === S_PLAYING || state === S_COUNTDOWN) {
     ctx.save();
     ctx.globalAlpha = 0.04;
@@ -1119,7 +1306,59 @@ function renderLoading() {
   ctx.font = `bold ${W * 0.06}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('加载中...', W / 2, H / 2);
+  ctx.fillText(loadingMessage, W / 2, H * 0.4);
+
+  // Loading progress for songs
+  const barW = W * 0.6;
+  const barH = H * 0.015;
+  const barX = (W - barW) / 2;
+  let baseY = H * 0.5;
+
+  for (let i = 0; i < SONGS.length; i++) {
+    const song = SONGS[i];
+    const status = songMp3Status[song.id];
+    const progress = songLoadProgress[song.id] || 0;
+    const y = baseY + i * (barH + H * 0.06);
+
+    // Song title
+    ctx.fillStyle = status === 'loaded' ? '#2ECC71' : status === 'missing' ? '#E74C3C' : '#999';
+    ctx.font = `${W * 0.03}px sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText(song.title, barX, y - barH);
+
+    // Status text
+    ctx.textAlign = 'right';
+    ctx.font = `${W * 0.025}px sans-serif`;
+    if (status === 'loaded') {
+      ctx.fillStyle = '#2ECC71';
+      ctx.fillText('已加载', barX + barW, y - barH);
+    } else if (status === 'missing') {
+      ctx.fillStyle = '#E74C3C';
+      ctx.fillText('未找到', barX + barW, y - barH);
+    } else if (status === 'loading') {
+      ctx.fillStyle = '#D4A84B';
+      ctx.fillText(`${Math.round(progress * 100)}%`, barX + barW, y - barH);
+    } else if (status === 'error') {
+      ctx.fillStyle = '#E74C3C';
+      ctx.fillText('加载失败', barX + barW, y - barH);
+    }
+
+    // Progress bar background
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    drawRoundRect(ctx, barX, y, barW, barH, barH / 2);
+    ctx.fill();
+
+    // Progress bar fill
+    if (status === 'loaded') {
+      ctx.fillStyle = '#2ECC71';
+      drawRoundRect(ctx, barX, y, barW, barH, barH / 2);
+      ctx.fill();
+    } else if (status === 'loading' && progress > 0) {
+      ctx.fillStyle = '#D4A84B';
+      drawRoundRect(ctx, barX, y, barW * progress, barH, barH / 2);
+      ctx.fill();
+    }
+  }
 }
 
 function renderTitle() {
@@ -1145,7 +1384,6 @@ function renderTitle() {
     ctx.drawImage(avatar, cx - avatarSize / 2, H * 0.15 - avatarSize / 2, avatarSize, avatarSize);
     ctx.restore();
 
-    // Avatar border
     ctx.strokeStyle = '#D4A84B';
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -1174,15 +1412,17 @@ function renderTitle() {
 
   // Song selection buttons
   const btnWidth = W * 0.7;
-  const btnHeight = H * 0.09;
+  const btnHeight = H * 0.1;
   const btnX = (W - btnWidth) / 2;
   const startY = H * 0.42;
-  const gap = btnHeight + H * 0.025;
+  const gap = btnHeight + H * 0.02;
 
   for (let i = 0; i < SONGS.length; i++) {
     const song = SONGS[i];
     const btnY = startY + i * gap;
     const isSelected = i === titleSelectedSong;
+    const status = songMp3Status[song.id];
+    const hasMp3 = status === 'loaded';
 
     // Button background
     ctx.save();
@@ -1194,28 +1434,71 @@ function renderTitle() {
     ctx.stroke();
     ctx.restore();
 
-    // Song name
+    // Song title
     ctx.fillStyle = isSelected ? '#D4A84B' : '#ccc';
-    ctx.font = `bold ${W * 0.045}px sans-serif`;
+    ctx.font = `bold ${W * 0.042}px sans-serif`;
     ctx.textAlign = 'left';
-    ctx.fillText(song.name, btnX + btnWidth * 0.08, btnY + btnHeight * 0.42);
+    ctx.fillText(song.title, btnX + btnWidth * 0.06, btnY + btnHeight * 0.32);
+
+    // Subtitle
+    ctx.fillStyle = isSelected ? 'rgba(255,255,255,0.6)' : '#777';
+    ctx.font = `${W * 0.025}px sans-serif`;
+    ctx.fillText(song.subtitle, btnX + btnWidth * 0.06, btnY + btnHeight * 0.55);
 
     // Difficulty label
     ctx.fillStyle = isSelected ? '#fff' : '#999';
-    ctx.font = `${W * 0.03}px sans-serif`;
-    ctx.fillText(song.diffLabel, btnX + btnWidth * 0.08, btnY + btnHeight * 0.75);
+    ctx.font = `${W * 0.025}px sans-serif`;
+    ctx.fillText(song.diffLabel, btnX + btnWidth * 0.06, btnY + btnHeight * 0.78);
 
-    // Difficulty stars
+    // Difficulty stars (right side)
     ctx.fillStyle = '#FFD700';
     ctx.font = `${W * 0.035}px sans-serif`;
     ctx.textAlign = 'right';
     const stars = '\u2605'.repeat(song.difficulty) + '\u2606'.repeat(3 - song.difficulty);
-    ctx.fillText(stars, btnX + btnWidth - btnWidth * 0.08, btnY + btnHeight * 0.55);
+    ctx.fillText(stars, btnX + btnWidth - btnWidth * 0.06, btnY + btnHeight * 0.35);
 
-    // Note count and BPM info
+    // Note count and BPM
     ctx.fillStyle = '#888';
-    ctx.font = `${W * 0.025}px sans-serif`;
-    ctx.fillText(`${song.notes.length}音符 · BPM ${song.bpm}`, btnX + btnWidth - btnWidth * 0.08, btnY + btnHeight * 0.8);
+    ctx.font = `${W * 0.022}px sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`${song.notes.length}音符 · BPM ${song.bpm}`, btnX + btnWidth - btnWidth * 0.06, btnY + btnHeight * 0.58);
+
+    // MP3 status tag
+    if (hasMp3) {
+      const tagText = 'MP3';
+      ctx.font = `bold ${W * 0.02}px sans-serif`;
+      const tw = ctx.measureText(tagText).width + 10;
+      const tagX = btnX + btnWidth - btnWidth * 0.06 - tw;
+      const tagY = btnY + btnHeight * 0.7;
+      const tagH = W * 0.028;
+      ctx.save();
+      drawRoundRect(ctx, tagX, tagY, tw, tagH, 4);
+      ctx.fillStyle = 'rgba(46,204,113,0.25)';
+      ctx.fill();
+      ctx.fillStyle = '#2ECC71';
+      ctx.font = `bold ${W * 0.02}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tagText, tagX + tw / 2, tagY + tagH / 2);
+      ctx.restore();
+    } else {
+      const tagText = '需要音乐文件';
+      ctx.font = `${W * 0.018}px sans-serif`;
+      const tw = ctx.measureText(tagText).width + 10;
+      const tagX = btnX + btnWidth - btnWidth * 0.06 - tw;
+      const tagY = btnY + btnHeight * 0.7;
+      const tagH = W * 0.026;
+      ctx.save();
+      drawRoundRect(ctx, tagX, tagY, tw, tagH, 4);
+      ctx.fillStyle = 'rgba(230,126,34,0.2)';
+      ctx.fill();
+      ctx.fillStyle = '#E67E22';
+      ctx.font = `${W * 0.018}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tagText, tagX + tw / 2, tagY + tagH / 2);
+      ctx.restore();
+    }
   }
 
   // Start button
@@ -1255,11 +1538,89 @@ function renderTitle() {
   ctx.globalAlpha = 1;
 }
 
+function renderMissingPrompt() {
+  // Darken background
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
+  const modalW = W * 0.85;
+  const modalH = H * 0.42;
+  const modalX = (W - modalW) / 2;
+  const modalY = (H - modalH) / 2;
+
+  // Modal background
+  ctx.save();
+  drawRoundRect(ctx, modalX, modalY, modalW, modalH, 16);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fill();
+  ctx.strokeStyle = '#D4A84B';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+
+  const cx = W / 2;
+  const song = missingPromptSong;
+
+  // Title
+  ctx.fillStyle = '#E67E22';
+  ctx.font = `bold ${W * 0.04}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('音乐文件未找到', cx, modalY + modalH * 0.12);
+
+  // Message
+  ctx.fillStyle = '#ccc';
+  ctx.font = `${W * 0.028}px sans-serif`;
+  ctx.fillText('请将音乐文件放入 assets/music/ 目录', cx, modalY + modalH * 0.24);
+
+  // Expected filename
+  ctx.fillStyle = '#D4A84B';
+  ctx.font = `bold ${W * 0.03}px sans-serif`;
+  const fileName = song ? song.file.split('/').pop() : '';
+  ctx.fillText(`需要文件: ${fileName}`, cx, modalY + modalH * 0.35);
+
+  // Additional info
+  ctx.fillStyle = '#888';
+  ctx.font = `${W * 0.022}px sans-serif`;
+  ctx.fillText(`曲目: ${song ? song.title : ''} (${song ? song.subtitle : ''})`, cx, modalY + modalH * 0.46);
+
+  // Button 1: Use synth
+  const btnW = modalW * 0.6;
+  const btnH = H * 0.05;
+  const btnX = (W - btnW) / 2;
+  const btn1Y = modalY + modalH * 0.58;
+
+  ctx.save();
+  drawRoundRect(ctx, btnX, btn1Y, btnW, btnH, 8);
+  ctx.fillStyle = '#D4A84B';
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = '#1a1a2e';
+  ctx.font = `bold ${W * 0.032}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('使用合成音乐', cx, btn1Y + btnH * 0.55);
+
+  // Button 2: Close
+  const btn2Y = modalY + modalH * 0.75;
+  ctx.save();
+  drawRoundRect(ctx, btnX, btn2Y, btnW, btnH, 8);
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = '#ccc';
+  ctx.font = `bold ${W * 0.032}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('返回', cx, btn2Y + btnH * 0.55);
+}
+
 function renderPlayfield() {
   const laneW = W / 4;
   const judgeY = H * JUDGE_Y_FRAC;
 
-  // Lane separators
   ctx.save();
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 1;
@@ -1270,7 +1631,6 @@ function renderPlayfield() {
     ctx.stroke();
   }
 
-  // Lane tint (subtle color at bottom near judgment line)
   for (let i = 0; i < 4; i++) {
     const grad = ctx.createLinearGradient(0, judgeY - H * 0.15, 0, judgeY);
     grad.addColorStop(0, 'transparent');
@@ -1285,7 +1645,6 @@ function renderPlayfield() {
 function renderJudgmentLine() {
   const judgeY = H * JUDGE_Y_FRAC;
 
-  // Main line
   ctx.save();
   const glow = 0.6 + beatPulse * 0.4;
   ctx.shadowColor = '#FFD700';
@@ -1299,7 +1658,6 @@ function renderJudgmentLine() {
   ctx.shadowBlur = 0;
   ctx.restore();
 
-  // Lane flash effects
   const laneW = W / 4;
   for (let i = 0; i < 4; i++) {
     if (laneFlash[i] > 0) {
@@ -1324,11 +1682,9 @@ function renderNotes() {
   const topY = H * 0.05;
   const scrollRange = judgeY - topY;
 
-  // Note rendering: position based on time difference
   for (const note of activeNotes) {
     const timeDiff = note.time - songTime;
 
-    // Skip notes too far in the future or already processed
     if (timeDiff > SCROLL_WINDOW + 0.5) continue;
     if (timeDiff < -1) continue;
 
@@ -1337,15 +1693,12 @@ function renderNotes() {
     const noteW = laneW * 0.65;
     const noteH = laneW * 0.22;
 
-    // Y position: timeDiff=0 means at judgment line, timeDiff=SCROLL_WINDOW means at top
     const progress = 1 - (timeDiff / SCROLL_WINDOW);
     const noteY = topY + progress * scrollRange;
 
-    // Approaching brightness
     const brightness = Math.min(1, 0.4 + progress * 0.8);
 
     if (note.hit) {
-      // Hit animation: note shrinks and fades
       const elapsed = songTime - note.hitTime;
       if (elapsed > 0.3) continue;
       const fade = 1 - elapsed / 0.3;
@@ -1360,7 +1713,6 @@ function renderNotes() {
     }
 
     if (note.missed) {
-      // Miss animation: note turns red and falls
       const elapsed = songTime - note.missTime;
       if (elapsed > 0.5) continue;
       const fade = 1 - elapsed / 0.5;
@@ -1377,13 +1729,11 @@ function renderNotes() {
       continue;
     }
 
-    // Only render notes in visible area
     if (noteY < topY - 30 || noteY > judgeY + 30) continue;
 
     ctx.save();
 
     if (note.type === N_HOLD) {
-      // Draw hold body first
       const holdEndTime = note.time + (note.holdDuration || 0);
       const holdEndDiff = holdEndTime - songTime;
       const holdEndProgress = 1 - (holdEndDiff / SCROLL_WINDOW);
@@ -1391,7 +1741,6 @@ function renderNotes() {
       const holdBodyTop = Math.max(topY, Math.min(noteY, judgeY));
       const holdStartY = Math.max(topY, holdEndY);
 
-      // Hold body
       const isHeld = laneHolds[note.lane] !== null;
       ctx.fillStyle = LANE_COLORS[note.lane];
       ctx.globalAlpha = (isHeld ? 0.5 : 0.25) * brightness;
@@ -1399,7 +1748,6 @@ function renderNotes() {
         holdBodyTop - holdStartY, 6);
       ctx.fill();
 
-      // Pulsing glow on held notes
       if (isHeld) {
         ctx.globalAlpha = 0.15 + Math.sin(songTime * 8) * 0.1;
         ctx.fillStyle = LANE_COLORS[note.lane];
@@ -1410,27 +1758,22 @@ function renderNotes() {
       ctx.globalAlpha = 1;
     }
 
-    // Note head
     const color = LANE_COLORS[note.lane];
     ctx.globalAlpha = brightness;
 
-    // Outer glow
     ctx.shadowColor = color;
     ctx.shadowBlur = 8 + (1 - Math.abs(timeDiff)) * 8;
 
-    // Note body
     ctx.fillStyle = color;
     drawRoundRect(ctx, laneCX - noteW / 2, noteY - noteH / 2, noteW, noteH, 8);
     ctx.fill();
 
-    // Inner highlight
     ctx.shadowBlur = 0;
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     drawRoundRect(ctx, laneCX - noteW / 2 + 3, noteY - noteH / 2 + 3,
       noteW - 6, noteH * 0.4, 5);
     ctx.fill();
 
-    // Hold indicator
     if (note.type === N_HOLD) {
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       ctx.font = `bold ${noteH * 0.55}px sans-serif`;
@@ -1461,7 +1804,6 @@ function renderLaneButtons() {
 
     ctx.save();
 
-    // Button background
     const grad = ctx.createLinearGradient(0, btnY, 0, btnY + btnH);
     if (isPressed) {
       grad.addColorStop(0, `rgba(${LANE_RGB[i]},0.4)`);
@@ -1473,22 +1815,18 @@ function renderLaneButtons() {
     ctx.fillStyle = grad;
     ctx.fillRect(x, btnY, laneW, btnH);
 
-    // Border
     ctx.strokeStyle = isPressed ? LANE_COLORS[i] : 'rgba(255,255,255,0.1)';
     ctx.lineWidth = isPressed ? 2 : 1;
     ctx.strokeRect(x, btnY, laneW, btnH);
 
-    // Press animation
     const scale = isPressed ? 0.92 : 1;
 
-    // Label
     ctx.fillStyle = isPressed ? LANE_COLORS[i] : 'rgba(255,255,255,0.35)';
     ctx.font = `bold ${W * 0.035 * scale}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(LANE_LABELS[i], x + laneW / 2, btnY + btnH * 0.5);
 
-    // Active hold indicator
     if (laneHolds[i]) {
       ctx.fillStyle = LANE_COLORS[i];
       ctx.globalAlpha = 0.3 + Math.sin(songTime * 10) * 0.15;
@@ -1519,7 +1857,6 @@ function renderHUD() {
     ctx.translate(cx, H * 0.06);
     ctx.scale(scale, scale);
 
-    // Combo glow for high combos
     if (combo >= 50) {
       ctx.shadowColor = '#FFD700';
       ctx.shadowBlur = 15;
@@ -1574,26 +1911,30 @@ function renderHUD() {
     ctx.restore();
   }
 
-  // Song name (top left)
+  // Song title + synth indicator (top left)
   if (currentSong) {
     ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.font = `${W * 0.03}px sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = `bold ${W * 0.03}px sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(currentSong.name, W * 0.025, safeTop + H * 0.01);
+    ctx.fillText(currentSong.title, W * 0.025, safeTop + H * 0.01);
+
+    if (usingSynth) {
+      ctx.fillStyle = 'rgba(230,126,34,0.6)';
+      ctx.font = `${W * 0.02}px sans-serif`;
+      ctx.fillText('合成音乐', W * 0.025, safeTop + H * 0.035);
+    }
     ctx.restore();
   }
 }
 
 function renderEffects() {
-  // Sword flash at 50+ combo
   if (swordFlashTimer > 0) {
     ctx.save();
     const progress = 1 - swordFlashTimer / 1.5;
     const alpha = swordFlashTimer > 1 ? (1.5 - swordFlashTimer) * 2 : swordFlashTimer / 1;
 
-    // Sword slash line across screen
     ctx.globalAlpha = alpha * 0.8;
     ctx.strokeStyle = '#FFD700';
     ctx.lineWidth = 4;
@@ -1606,7 +1947,6 @@ function renderEffects() {
     ctx.lineTo(W + 20, slashY - 30);
     ctx.stroke();
 
-    // "青莲剑歌" text
     ctx.shadowBlur = 15;
     ctx.fillStyle = '#FFD700';
     ctx.font = `bold ${W * 0.12}px sans-serif`;
@@ -1636,7 +1976,6 @@ function renderCountdown() {
   ctx.fillText(num.toString(), 0, 0);
   ctx.restore();
 
-  // "GET READY"
   ctx.save();
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.font = `${W * 0.04}px sans-serif`;
@@ -1646,7 +1985,6 @@ function renderCountdown() {
 }
 
 function renderResults() {
-  // Dark overlay
   ctx.save();
   ctx.fillStyle = 'rgba(10,10,26,0.92)';
   ctx.fillRect(0, 0, W, H);
@@ -1655,7 +1993,6 @@ function renderResults() {
   const cx = W / 2;
   const scoreRatio = maxPossibleScore > 0 ? score / maxPossibleScore : 0;
 
-  // Grade
   let grade = 'C';
   for (const [g, threshold] of GRADES) {
     if (scoreRatio >= threshold) { grade = g; break; }
@@ -1672,7 +2009,7 @@ function renderResults() {
   // Song name
   ctx.fillStyle = 'rgba(255,255,255,0.6)';
   ctx.font = `${W * 0.035}px sans-serif`;
-  ctx.fillText(currentSong.name, cx, H * 0.13);
+  ctx.fillText(currentSong.title, cx, H * 0.13);
 
   // Grade circle
   ctx.save();
@@ -1804,6 +2141,7 @@ function renderResults() {
 
 async function init() {
   state = S_LOADING;
+  loadingMessage = '加载资源...';
 
   // Load shared modules in parallel
   const [heroList] = await Promise.all([
@@ -1813,18 +2151,27 @@ async function init() {
 
   season = getCurrentSeason();
 
-  // Audio init deferred to first user interaction (touch/click)
-
-  // Start game loop
+  // Start game loop and touch handlers immediately
   const loop = createGameLoop(update, render);
   loop.start();
-
-  // Setup touch
   setupTouchHandlers();
 
-  // Go to title
+  // Try to load MP3 files in parallel (non-blocking)
+  loadingMessage = '加载音乐...';
+  const loadPromises = SONGS.map(song => loadSongAudio(song).catch(() => null));
+  await Promise.allSettled(loadPromises);
+
+  // Go to title regardless of MP3 load results
   state = S_TITLE;
 }
+
+// Clean up when navigating away
+window.addEventListener('beforeunload', () => {
+  stopMusic();
+});
+window.addEventListener('pagehide', () => {
+  stopMusic();
+});
 
 init().catch(console.error);
 
