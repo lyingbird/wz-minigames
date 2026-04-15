@@ -31,6 +31,28 @@ export const HERO_TYPES = {
   6: '辅助',  // Support
 };
 
+/** Hero type → border/accent color (unified semantic across all games) */
+export const HERO_TYPE_COLORS = {
+  1: '#E67E22', // 战士 Warrior — orange
+  2: '#9B59B6', // 法师 Mage — purple
+  3: '#27AE60', // 坦克 Tank — green
+  4: '#E74C3C', // 刺客 Assassin — red
+  5: '#3498DB', // 射手 Marksman — blue
+  6: '#1ABC9C', // 辅助 Support — teal
+};
+
+/**
+ * Get the semantic border color for a hero by ename.
+ * Falls back to gold if hero data not loaded or type unknown.
+ * @param {number} ename
+ * @returns {string} hex color
+ */
+export function getHeroColor(ename) {
+  const hero = heroMap ? heroMap.get(Number(ename)) : null;
+  if (!hero) return '#D4A84B'; // gold fallback
+  return HERO_TYPE_COLORS[hero.hero_type] || HERO_TYPE_COLORS[hero.hero_type2] || '#D4A84B';
+}
+
 /** Key hero constants used across mini-games */
 export const GAME_HEROES = {
   // Main playable heroes (one per game)
