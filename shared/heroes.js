@@ -473,3 +473,224 @@ export async function preloadSkin(ename, skinIndex = 1) {
 export function getSkinImage(ename, skinIndex = 1) {
   return skinImageCache.get(`${ename}-${skinIndex}`) || null;
 }
+
+// ---------------------------------------------------------------------------
+// Q-version (chibi) hero drawing
+// ---------------------------------------------------------------------------
+
+/**
+ * Draw a Q-version Lian Po (廉颇) character on a canvas context.
+ * Chunky tank with white hair, blue armor, gold trim, big shield.
+ * All coordinates relative to S x S canvas.
+ *
+ * @param {CanvasRenderingContext2D} c
+ * @param {number} S - canvas size (width & height)
+ */
+function drawLianPoQVersion(c, S) {
+  const cx = S / 2;
+
+  // Ground shadow
+  c.save();
+  c.globalAlpha = 0.25;
+  c.fillStyle = '#000';
+  c.beginPath();
+  c.ellipse(cx, S * 0.93, S * 0.32, S * 0.05, 0, 0, Math.PI * 2);
+  c.fill();
+  c.restore();
+
+  // Stubby legs
+  const legY = S * 0.82;
+  const legR = S * 0.06;
+  c.fillStyle = '#2C5282';
+  c.beginPath(); c.arc(cx - S * 0.1, legY, legR, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#1A3A5C'; c.lineWidth = 1; c.stroke();
+  c.beginPath(); c.arc(cx + S * 0.1, legY, legR, 0, Math.PI * 2); c.fill(); c.stroke();
+  c.fillStyle = '#D4A84B';
+  c.beginPath(); c.ellipse(cx - S * 0.1, legY + legR * 0.5, legR * 0.8, legR * 0.35, 0, 0, Math.PI); c.fill();
+  c.beginPath(); c.ellipse(cx + S * 0.1, legY + legR * 0.5, legR * 0.8, legR * 0.35, 0, 0, Math.PI); c.fill();
+
+  // Shield (left side)
+  const shX = cx - S * 0.34, shY = S * 0.52, shW = S * 0.18, shH = S * 0.32, shR = S * 0.03;
+  const shGrad = c.createLinearGradient(shX - shW / 2, shY, shX + shW / 2, shY);
+  shGrad.addColorStop(0, '#2C5282'); shGrad.addColorStop(0.5, '#3B6BA5'); shGrad.addColorStop(1, '#2C5282');
+  c.beginPath();
+  c.moveTo(shX - shW / 2 + shR, shY - shH / 2);
+  c.lineTo(shX + shW / 2 - shR, shY - shH / 2);
+  c.arcTo(shX + shW / 2, shY - shH / 2, shX + shW / 2, shY - shH / 2 + shR, shR);
+  c.lineTo(shX + shW / 2, shY + shH / 2 - shR);
+  c.arcTo(shX + shW / 2, shY + shH / 2, shX + shW / 2 - shR, shY + shH / 2, shR);
+  c.lineTo(shX - shW / 2 + shR, shY + shH / 2);
+  c.arcTo(shX - shW / 2, shY + shH / 2, shX - shW / 2, shY + shH / 2 - shR, shR);
+  c.lineTo(shX - shW / 2, shY - shH / 2 + shR);
+  c.arcTo(shX - shW / 2, shY - shH / 2, shX - shW / 2 + shR, shY - shH / 2, shR);
+  c.closePath();
+  c.fillStyle = shGrad; c.fill();
+  c.strokeStyle = '#D4A84B'; c.lineWidth = S * 0.02; c.stroke();
+  c.strokeStyle = '#D4A84B'; c.lineWidth = S * 0.015;
+  c.beginPath(); c.moveTo(shX, shY - shH * 0.3); c.lineTo(shX, shY + shH * 0.3);
+  c.moveTo(shX - shW * 0.3, shY); c.lineTo(shX + shW * 0.3, shY); c.stroke();
+
+  // Body (chunky ellipse)
+  const bodyX = cx, bodyY = S * 0.62, bodyW = S * 0.32, bodyH = S * 0.24;
+  const bodyGrad = c.createLinearGradient(bodyX, bodyY - bodyH, bodyX, bodyY + bodyH);
+  bodyGrad.addColorStop(0, '#4A7FB5'); bodyGrad.addColorStop(0.4, '#3B6BA5'); bodyGrad.addColorStop(1, '#2C5282');
+  c.beginPath(); c.ellipse(bodyX, bodyY, bodyW, bodyH, 0, 0, Math.PI * 2);
+  c.fillStyle = bodyGrad; c.fill();
+  c.strokeStyle = '#1A3A5C'; c.lineWidth = S * 0.015; c.stroke();
+
+  // Gold belt
+  const beltY2 = bodyY - bodyH * 0.05;
+  const beltHW = bodyW * 0.95;
+  c.fillStyle = '#D4A84B';
+  c.beginPath();
+  c.moveTo(bodyX - beltHW, beltY2 - S * 0.02);
+  c.quadraticCurveTo(bodyX, beltY2 - S * 0.03, bodyX + beltHW, beltY2 - S * 0.02);
+  c.lineTo(bodyX + beltHW, beltY2 + S * 0.02);
+  c.quadraticCurveTo(bodyX, beltY2 + S * 0.01, bodyX - beltHW, beltY2 + S * 0.02);
+  c.closePath(); c.fill();
+  c.fillStyle = '#EAC85B';
+  c.beginPath(); c.arc(bodyX, beltY2, S * 0.025, 0, Math.PI * 2); c.fill();
+
+  // Arms
+  const armR = S * 0.055;
+  c.fillStyle = '#3B6BA5';
+  c.beginPath(); c.arc(cx + S * 0.3, bodyY + bodyH * 0.1, armR, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#1A3A5C'; c.lineWidth = 1; c.stroke();
+  c.fillStyle = '#F5D0A9';
+  c.beginPath(); c.arc(cx + S * 0.33, bodyY + bodyH * 0.2, armR * 0.6, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#3B6BA5';
+  c.beginPath(); c.arc(cx - S * 0.26, bodyY + bodyH * 0.05, armR, 0, Math.PI * 2); c.fill();
+
+  // Head (BIG for Q-version)
+  const headR = S * 0.23, headCy = S * 0.32;
+  c.beginPath(); c.arc(cx + 1, headCy + 2, headR + 1, 0, Math.PI * 2);
+  c.fillStyle = 'rgba(0,0,0,0.15)'; c.fill();
+  const skinGrad = c.createRadialGradient(cx - headR * 0.2, headCy - headR * 0.2, 0, cx, headCy, headR);
+  skinGrad.addColorStop(0, '#FDDCB5'); skinGrad.addColorStop(0.7, '#F5D0A9'); skinGrad.addColorStop(1, '#E8B88A');
+  c.beginPath(); c.arc(cx, headCy, headR, 0, Math.PI * 2);
+  c.fillStyle = skinGrad; c.fill();
+  c.strokeStyle = '#C9956B'; c.lineWidth = S * 0.012; c.stroke();
+
+  // Eyebrows (thick white, angled = stern)
+  c.strokeStyle = '#E8E8E8'; c.lineWidth = S * 0.03; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(cx - headR * 0.55, headCy - headR * 0.22); c.lineTo(cx - headR * 0.15, headCy - headR * 0.08); c.stroke();
+  c.beginPath(); c.moveTo(cx + headR * 0.55, headCy - headR * 0.22); c.lineTo(cx + headR * 0.15, headCy - headR * 0.08); c.stroke();
+
+  // Eyes (small determined dots)
+  c.fillStyle = '#1A1A2E';
+  c.beginPath(); c.arc(cx - headR * 0.3, headCy + headR * 0.02, S * 0.025, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(cx + headR * 0.3, headCy + headR * 0.02, S * 0.025, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#fff';
+  c.beginPath(); c.arc(cx - headR * 0.28, headCy - headR * 0.01, S * 0.01, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(cx + headR * 0.32, headCy - headR * 0.01, S * 0.01, 0, Math.PI * 2); c.fill();
+
+  // Mouth
+  c.strokeStyle = '#8B5E3C'; c.lineWidth = S * 0.012;
+  c.beginPath(); c.moveTo(cx - headR * 0.18, headCy + headR * 0.32); c.lineTo(cx + headR * 0.18, headCy + headR * 0.32); c.stroke();
+
+  // White beard
+  c.strokeStyle = '#D8D8D8'; c.lineWidth = S * 0.02;
+  c.beginPath(); c.arc(cx, headCy + headR * 0.45, headR * 0.2, Math.PI * 0.15, Math.PI * 0.85); c.stroke();
+  c.lineWidth = S * 0.015;
+  c.beginPath(); c.arc(cx, headCy + headR * 0.52, headR * 0.13, Math.PI * 0.2, Math.PI * 0.8); c.stroke();
+
+  // Blush
+  c.save(); c.globalAlpha = 0.18; c.fillStyle = '#E8888A';
+  c.beginPath(); c.ellipse(cx - headR * 0.48, headCy + headR * 0.18, S * 0.03, S * 0.02, 0, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.ellipse(cx + headR * 0.48, headCy + headR * 0.18, S * 0.03, S * 0.02, 0, 0, Math.PI * 2); c.fill();
+  c.restore();
+
+  // Spiky white hair
+  c.fillStyle = '#E8E8E8'; c.strokeStyle = '#C8C8C8'; c.lineWidth = 0.8;
+  const hairBase = headCy - headR * 0.65;
+  const spikes = [
+    { x: cx - headR * 0.4, tipX: cx - headR * 0.55, tipY: hairBase - S * 0.07 },
+    { x: cx - headR * 0.15, tipX: cx - headR * 0.2, tipY: hairBase - S * 0.11 },
+    { x: cx + headR * 0.1, tipX: cx + headR * 0.05, tipY: hairBase - S * 0.12 },
+    { x: cx + headR * 0.35, tipX: cx + headR * 0.45, tipY: hairBase - S * 0.08 },
+  ];
+  for (const spike of spikes) {
+    c.beginPath();
+    c.moveTo(spike.x - S * 0.04, hairBase + S * 0.02);
+    c.lineTo(spike.tipX, spike.tipY);
+    c.lineTo(spike.x + S * 0.04, hairBase + S * 0.02);
+    c.closePath(); c.fill(); c.stroke();
+  }
+
+  // Helmet headband
+  const hbY = headCy - headR * 0.52;
+  c.fillStyle = '#3B6BA5';
+  c.beginPath();
+  c.arc(cx, headCy, headR + 1, -Math.PI * 0.82, -Math.PI * 0.18);
+  c.lineTo(cx + headR * Math.cos(-Math.PI * 0.18), hbY + S * 0.04);
+  c.arc(cx, headCy, headR - S * 0.04, -Math.PI * 0.18, -Math.PI * 0.82, true);
+  c.closePath(); c.fill();
+  c.strokeStyle = '#D4A84B'; c.lineWidth = S * 0.015;
+  c.beginPath(); c.arc(cx, headCy, headR - S * 0.005, -Math.PI * 0.8, -Math.PI * 0.2); c.stroke();
+  c.fillStyle = '#EAC85B';
+  c.beginPath(); c.arc(cx, hbY + S * 0.005, S * 0.02, 0, Math.PI * 2); c.fill();
+
+  // Forehead highlight
+  c.save(); c.globalAlpha = 0.35; c.fillStyle = '#fff';
+  c.beginPath(); c.arc(cx - headR * 0.15, headCy - headR * 0.4, S * 0.018, 0, Math.PI * 2); c.fill();
+  c.restore();
+}
+
+/**
+ * Create an offscreen canvas with a Q-version hero character drawn on it.
+ * Currently only Lian Po (105) has a custom Q-version drawing.
+ * Other heroes fall back to their avatar image rendered in a circle.
+ *
+ * @param {number} ename - hero ID
+ * @param {number} size - canvas width & height in pixels
+ * @returns {HTMLCanvasElement}
+ */
+export function createQHeroCanvas(ename, size) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+
+  if (Number(ename) === 105) {
+    drawLianPoQVersion(ctx, size);
+  } else {
+    // Fallback: draw avatar image in circle if available
+    const img = getAvatarImage(Number(ename));
+    if (img) {
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(img, 0, 0, size, size);
+    } else {
+      // Use placeholder if no image loaded
+      const hero = heroMap ? heroMap.get(Number(ename)) : null;
+      const name = hero ? hero.cname : String(ename);
+      const placeholder = createPlaceholder(name, size);
+      ctx.drawImage(placeholder, 0, 0);
+    }
+  }
+  return canvas;
+}
+
+/**
+ * Draw a Q-version hero on a provided canvas context.
+ * Convenience wrapper — delegates to createQHeroCanvas internally
+ * or draws directly for known heroes.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} ename - hero ID
+ * @param {number} size - draw area size
+ */
+export function drawQHero(ctx, ename, size) {
+  if (Number(ename) === 105) {
+    drawLianPoQVersion(ctx, size);
+  } else {
+    const img = getAvatarImage(Number(ename));
+    if (img) {
+      ctx.beginPath();
+      ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(img, 0, 0, size, size);
+    }
+  }
+}
