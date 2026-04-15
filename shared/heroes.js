@@ -31,27 +31,36 @@ export const HERO_TYPES = {
   6: '辅助',  // Support
 };
 
-/** Hero type → border/accent color (unified semantic across all games) */
-export const HERO_TYPE_COLORS = {
-  1: '#E67E22', // 战士 Warrior — orange
-  2: '#9B59B6', // 法师 Mage — purple
-  3: '#27AE60', // 坦克 Tank — green
-  4: '#E74C3C', // 刺客 Assassin — red
-  5: '#3498DB', // 射手 Marksman — blue
-  6: '#1ABC9C', // 辅助 Support — teal
+/**
+ * Unified 3-category color semantic (used across ALL games for target borders):
+ *   DANGER  = red    → don't touch (bombs, allies, hazards)
+ *   VALUE   = gold   → go grab it (high-score targets, tanks, rare heroes)
+ *   SPECIAL = cyan   → power-up (buffs, treasure, special effects)
+ *   DEFAULT = grey   → low-value/common (minions, basic targets)
+ */
+export const TARGET_COLORS = {
+  DANGER:  '#E74C3C',
+  VALUE:   '#FFD700',
+  SPECIAL: '#1ABC9C',
+  DEFAULT: '#8899AA',
 };
 
 /**
- * Get the semantic border color for a hero by ename.
- * Falls back to gold if hero data not loaded or type unknown.
- * @param {number} ename
- * @returns {string} hex color
+ * Hero ability flavor — subtle gameplay effects when a hero appears as a target.
+ * Each hero has a short passive that doesn't break core gameplay but adds character.
  */
-export function getHeroColor(ename) {
-  const hero = heroMap ? heroMap.get(Number(ename)) : null;
-  if (!hero) return '#D4A84B'; // gold fallback
-  return HERO_TYPE_COLORS[hero.hero_type] || HERO_TYPE_COLORS[hero.hero_type2] || '#D4A84B';
-}
+export const HERO_ABILITIES = {
+  109: { name: '妲己', passive: 'charm',     desc: '被击中时，附近目标短暂减速' },
+  107: { name: '赵云', passive: 'charge',    desc: '会突然加速冲刺' },
+  112: { name: '鲁班', passive: 'tiny',      desc: '体型小移动快，难以命中' },
+  150: { name: '韩信', passive: 'dash',      desc: '会突然变向闪避' },
+  166: { name: '亚瑟', passive: 'shield',    desc: '有护盾，需要命中两次' },
+  142: { name: '安琪拉', passive: 'fire',    desc: '经过的路径留下火焰区域' },
+  167: { name: '孙悟空', passive: 'clone',   desc: '偶尔分裂出分身（假目标）' },
+  113: { name: '庄周', passive: 'immune',    desc: '短暂免疫一次钩取/切割' },
+  105: { name: '廉颇', passive: 'heavy',     desc: '极重极慢，但分值最高' },
+  199: { name: '公孙离', passive: 'blink',   desc: '被接近时会短距传送' },
+};
 
 /** Key hero constants used across mini-games */
 export const GAME_HEROES = {
