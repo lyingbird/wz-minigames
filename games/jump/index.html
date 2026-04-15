@@ -302,7 +302,7 @@ function renderHudFloats() {
 
 // ═══════════════════════════════════════════════════════════
 // 3D Lian Po Character — Honor of Kings Accurate Colors
-// RED + BLACK + GOLD fierce warrior with massive shield
+// RED + BLACK + GOLD fierce warrior with DUAL massive arm-mounted shields
 // ═══════════════════════════════════════════════════════════
 const lianpo = new THREE.Group();
 
@@ -317,8 +317,6 @@ const C = {
   shieldRed: 0xAA1100,
   shieldGold: 0xCCAA44,
   orbGlow: 0xFFFFCC,
-  blade: 0x333333,
-  bladeEdge: 0xCC2200,
 };
 const armorMat = new THREE.MeshStandardMaterial({ color: C.armor, metalness: 0.4, roughness: 0.6 });
 const armorRedMat = new THREE.MeshStandardMaterial({ color: C.armorRed, metalness: 0.4, roughness: 0.6 });
@@ -430,144 +428,108 @@ const mouth = new THREE.Mesh(mouthGeo, mouthMat);
 mouth.position.set(0, 0.57, 0.20);
 lianpo.add(mouth);
 
-// ── Arms — exposed muscular skin + dark gauntlets ──
-// Right arm (sword side)
-const rShoulderGeo = new THREE.SphereGeometry(0.09, 10, 10);
-const rShoulder = new THREE.Mesh(rShoulderGeo, skinMat);
-rShoulder.position.set(-0.40, 0.35, 0);
-rShoulder.castShadow = true;
-lianpo.add(rShoulder);
+// ── DUAL MASSIVE ARM-MOUNTED SHIELDS (Lian Po's iconic look) ──
+// Small shoulder joints (arms hidden behind shields)
+[-1, 1].forEach(side => {
+  const shoulderGeo = new THREE.SphereGeometry(0.08, 10, 10);
+  const shoulder = new THREE.Mesh(shoulderGeo, armorMat);
+  shoulder.position.set(side * 0.38, 0.35, 0);
+  shoulder.castShadow = true;
+  lianpo.add(shoulder);
+});
 
-const rArmGeo = new THREE.CylinderGeometry(0.06, 0.055, 0.18, 8);
-const rArm = new THREE.Mesh(rArmGeo, skinMat);
-rArm.position.set(-0.42, 0.22, 0);
-rArm.castShadow = true;
-lianpo.add(rArm);
+// Mega shield builder function
+function createMegaShield() {
+  const shield = new THREE.Group();
 
-// Right gauntlet
-const rGauntGeo = new THREE.CylinderGeometry(0.065, 0.07, 0.10, 8);
-const rGaunt = new THREE.Mesh(rGauntGeo, armorMat);
-rGaunt.position.set(-0.42, 0.12, 0);
-rGaunt.castShadow = true;
-lianpo.add(rGaunt);
-// Red trim on gauntlet
-const rGTrimGeo = new THREE.TorusGeometry(0.068, 0.012, 6, 12);
-const rGTrim = new THREE.Mesh(rGTrimGeo, armorRedMat);
-rGTrim.position.set(-0.42, 0.16, 0);
-rGTrim.rotation.x = Math.PI / 2;
-lianpo.add(rGTrim);
+  // Main shield body - large rounded box
+  const mainGeo = new THREE.BoxGeometry(0.5, 0.7, 0.25);
+  const mainMat = new THREE.MeshStandardMaterial({
+    color: C.shieldRed, metalness: 0.5, roughness: 0.5
+  });
+  const main = new THREE.Mesh(mainGeo, mainMat);
+  main.castShadow = true;
+  shield.add(main);
 
-// Left arm (shield side)
-const lShoulderGeo = new THREE.SphereGeometry(0.09, 10, 10);
-const lShoulder = new THREE.Mesh(lShoulderGeo, skinMat);
-lShoulder.position.set(0.40, 0.35, 0);
-lShoulder.castShadow = true;
-lianpo.add(lShoulder);
+  // Gold border material
+  const borderMat = new THREE.MeshStandardMaterial({
+    color: C.shieldGold, metalness: 0.6, roughness: 0.4
+  });
 
-const lArmGeo = new THREE.CylinderGeometry(0.06, 0.055, 0.18, 8);
-const lArm = new THREE.Mesh(lArmGeo, skinMat);
-lArm.position.set(0.42, 0.22, 0);
-lArm.castShadow = true;
-lianpo.add(lArm);
+  // Gold borders (top, bottom, left, right)
+  const borders = [
+    { pos: [0, 0.35, 0.13], size: [0.52, 0.04, 0.27] },  // top
+    { pos: [0, -0.35, 0.13], size: [0.52, 0.04, 0.27] },  // bottom
+    { pos: [-0.25, 0, 0.13], size: [0.04, 0.7, 0.27] },   // left
+    { pos: [0.25, 0, 0.13], size: [0.04, 0.7, 0.27] },    // right
+  ];
+  borders.forEach(b => {
+    const geo = new THREE.BoxGeometry(b.size[0], b.size[1], b.size[2]);
+    const mesh = new THREE.Mesh(geo, borderMat);
+    mesh.position.set(b.pos[0], b.pos[1], b.pos[2]);
+    mesh.castShadow = true;
+    shield.add(mesh);
+  });
 
-// Left gauntlet
-const lGauntGeo = new THREE.CylinderGeometry(0.065, 0.07, 0.10, 8);
-const lGaunt = new THREE.Mesh(lGauntGeo, armorMat);
-lGaunt.position.set(0.42, 0.12, 0);
-lGaunt.castShadow = true;
-lianpo.add(lGaunt);
-const lGTrimGeo = new THREE.TorusGeometry(0.068, 0.012, 6, 12);
-const lGTrim = new THREE.Mesh(lGTrimGeo, armorRedMat);
-lGTrim.position.set(0.42, 0.16, 0);
-lGTrim.rotation.x = Math.PI / 2;
-lianpo.add(lGTrim);
+  // Cannon barrels on top (2 cylinders)
+  const barrelMat = new THREE.MeshStandardMaterial({
+    color: 0x333333, metalness: 0.7, roughness: 0.3
+  });
+  [-0.12, 0.12].forEach(x => {
+    const barrel = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.05, 0.2, 8),
+      barrelMat
+    );
+    barrel.position.set(x, 0.4, 0.1);
+    barrel.rotation.x = -Math.PI / 6;
+    barrel.castShadow = true;
+    shield.add(barrel);
+  });
 
-// ── SHIELD (RIGHT side) — massive, ornate, iconic ──
-const shieldGroup = new THREE.Group();
-shieldGroup.position.set(0.48, 0.30, 0.05);
+  // Center circular element (red glowing orb)
+  const centerOrb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.08, 12, 12),
+    new THREE.MeshStandardMaterial({
+      color: 0xFF4400, emissive: 0xFF2200, emissiveIntensity: 0.5
+    })
+  );
+  centerOrb.position.set(0, 0, 0.14);
+  shield.add(centerOrb);
 
-// Main shield body (big!)
-const shieldGeo = new THREE.BoxGeometry(0.10, 0.55, 0.45);
-const shieldMat = new THREE.MeshStandardMaterial({ color: C.shieldRed, metalness: 0.4, roughness: 0.6 });
-const shield = new THREE.Mesh(shieldGeo, shieldMat);
-shield.castShadow = true;
-shieldGroup.add(shield);
+  // Gold ring around center orb
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.1, 0.015, 8, 16),
+    borderMat
+  );
+  ring.position.set(0, 0, 0.14);
+  shield.add(ring);
 
-// Gold border — top
-const sbtGeo = new THREE.BoxGeometry(0.12, 0.03, 0.47);
-const sbt = new THREE.Mesh(sbtGeo, new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 }));
-sbt.position.y = 0.27;
-shieldGroup.add(sbt);
-// Gold border — bottom
-const sbbGeo = new THREE.BoxGeometry(0.12, 0.03, 0.47);
-const sbb = new THREE.Mesh(sbbGeo, new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 }));
-sbb.position.y = -0.27;
-shieldGroup.add(sbb);
-// Gold border — left
-const sblGeo = new THREE.BoxGeometry(0.12, 0.55, 0.03);
-const sbl = new THREE.Mesh(sblGeo, new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 }));
-sbl.position.z = 0.22;
-shieldGroup.add(sbl);
-// Gold border — right
-const sbrGeo = new THREE.BoxGeometry(0.12, 0.55, 0.03);
-const sbr = new THREE.Mesh(sbrGeo, new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 }));
-sbr.position.z = -0.22;
-shieldGroup.add(sbr);
+  // Rivets (small gold spheres at corners)
+  [[-0.18, 0.25], [0.18, 0.25], [-0.18, -0.25], [0.18, -0.25]].forEach(([x, y]) => {
+    const rivet = new THREE.Mesh(
+      new THREE.SphereGeometry(0.025, 8, 8),
+      borderMat
+    );
+    rivet.position.set(x, y, 0.14);
+    shield.add(rivet);
+  });
 
-// Gold cross / filigree (two crossed bars)
-const crossH = new THREE.Mesh(
-  new THREE.BoxGeometry(0.12, 0.03, 0.36),
-  new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 })
-);
-shieldGroup.add(crossH);
-const crossV = new THREE.Mesh(
-  new THREE.BoxGeometry(0.12, 0.40, 0.03),
-  new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 })
-);
-shieldGroup.add(crossV);
+  shield.castShadow = true;
+  return shield;
+}
 
-// Center orb (glowing white/blue)
-const orbGeo = new THREE.SphereGeometry(0.06, 16, 16);
-const orbMat = new THREE.MeshStandardMaterial({ color: C.orbGlow, emissive: 0xFFFFCC, emissiveIntensity: 0.8, metalness: 0.1, roughness: 0.2 });
-const orb = new THREE.Mesh(orbGeo, orbMat);
-orb.position.x = 0.06;
-shieldGroup.add(orb);
+// LEFT mega shield
+const leftShield = createMegaShield();
+leftShield.position.set(-0.55, 0.25, 0);
+leftShield.rotation.y = Math.PI * 0.15;
+lianpo.add(leftShield);
 
-lianpo.add(shieldGroup);
-
-// ── SWORD (LEFT side) ──
-const swordGroup = new THREE.Group();
-swordGroup.position.set(-0.44, 0.10, 0.06);
-swordGroup.rotation.z = 0.15;
-
-// Blade
-const bladeGeo = new THREE.BoxGeometry(0.04, 0.45, 0.08);
-const bladeMat = new THREE.MeshStandardMaterial({ color: C.blade, metalness: 0.5, roughness: 0.4 });
-const blade = new THREE.Mesh(bladeGeo, bladeMat);
-blade.position.y = 0.10;
-blade.castShadow = true;
-swordGroup.add(blade);
-
-// Red edge line along blade
-const edgeGeo = new THREE.BoxGeometry(0.045, 0.45, 0.02);
-const edgeMat = new THREE.MeshStandardMaterial({ color: C.bladeEdge, emissive: C.bladeEdge, emissiveIntensity: 0.2, metalness: 0.4, roughness: 0.5 });
-const edge = new THREE.Mesh(edgeGeo, edgeMat);
-edge.position.set(0, 0.10, 0.04);
-swordGroup.add(edge);
-
-// Guard (crosspiece)
-const guardGeo = new THREE.BoxGeometry(0.03, 0.04, 0.14);
-const guard = new THREE.Mesh(guardGeo, goldMat);
-guard.position.y = -0.12;
-swordGroup.add(guard);
-
-// Handle
-const handleGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.10, 8);
-const handle = new THREE.Mesh(handleGeo, armorMat);
-handle.position.y = -0.18;
-swordGroup.add(handle);
-
-lianpo.add(swordGroup);
+// RIGHT mega shield (mirrored)
+const rightShield = createMegaShield();
+rightShield.position.set(0.55, 0.25, 0);
+rightShield.rotation.y = -Math.PI * 0.15;
+rightShield.scale.x = -1;
+lianpo.add(rightShield);
 
 // ── Legs ──
 [-0.12, 0.12].forEach(xOff => {
@@ -1037,6 +999,7 @@ function handlePointerDown(clientX, clientY) {
   }
 
   if (state === 'gameover') {
+    if (!gameOverReady) return;
     const cy = designH / 2;
     const btnY = cy + 65;
     const btnH = 44;
@@ -1147,15 +1110,26 @@ function startGame() {
 
 function gameOver() {
   state = 'gameover';
+  gameOverReady = false;
+  gameOverRank = -1;
   if (audio) audio.stopBGM(1);
 
-  const pb = getPersonalBest(GAME_ID);
-  const isNew = !pb || score > pb.score;
-  if (score > 0) {
-    addScore(GAME_ID, score, HERO_ID, '廉颇');
+  async function handleGameOver() {
+    if (score > 0 && isTopScore(GAME_ID, score)) {
+      const name = await showNicknameInput(hudCanvas, score, '进入今日前5!');
+      const result = addScore(GAME_ID, score, name);
+      gameOverRank = result.rank;
+    } else if (score > 0) {
+      const result = addScore(GAME_ID, score, getPlayerName());
+      gameOverRank = result.rank;
+    }
+    const pb = getPersonalBest(GAME_ID);
+    const isNew = !bestScore || score > bestScore;
+    bestScore = pb?.score || 0;
+    if (isNew && score > 0 && audio) audio.playNewRecord();
+    gameOverReady = true;
   }
-  if (isNew && score > 0 && audio) audio.playNewRecord();
-  bestScore = getPersonalBest(GAME_ID)?.score || 0;
+  handleGameOver();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1285,33 +1259,50 @@ function drawGameOverHUD() {
   c.fillRect(0, 0, W, H);
   c.globalAlpha = 1;
 
+  if (!gameOverReady) {
+    c.font = 'bold 20px sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillStyle = 'rgba(255,255,255,0.3)';
+    c.fillText('...', W / 2, H / 2);
+    c.restore();
+    return;
+  }
+
   const cy = H / 2;
 
   // Title
   c.textAlign = 'center';
   c.font = 'bold 32px sans-serif';
   c.fillStyle = COLORS.GOLD;
-  c.fillText('游戏结束', W / 2, cy - 80);
+  c.fillText('游戏结束', W / 2, cy - 110);
 
   // Score
-  c.font = 'bold 56px sans-serif';
+  c.font = 'bold 48px sans-serif';
   c.fillStyle = '#fff';
-  c.fillText(formatScore(score), W / 2, cy - 20);
+  c.fillText(formatScore(score), W / 2, cy - 60);
 
   // Best
   const pb = getPersonalBest(GAME_ID);
   const isNewRecord = pb && score >= pb.score && score > 0;
-  c.font = '16px sans-serif';
+  c.font = '14px sans-serif';
   c.fillStyle = isNewRecord ? COLORS.GOLD : 'rgba(255,255,255,0.6)';
   c.fillText(
     isNewRecord ? `新纪录! 最高分: ${formatScore(bestScore)}` : `最高分: ${formatScore(bestScore)}`,
-    W / 2, cy + 20
+    W / 2, cy - 30
   );
 
   // Jump count
-  c.font = '14px sans-serif';
+  c.font = '13px sans-serif';
   c.fillStyle = 'rgba(255,255,255,0.4)';
-  c.fillText(`跳跃次数: ${jumpCount}`, W / 2, cy + 45);
+  c.fillText(`跳跃次数: ${jumpCount}`, W / 2, cy - 12);
+
+  // Mini Leaderboard
+  const board = getLeaderboard(GAME_ID);
+  if (board.length > 0) {
+    const lbW = Math.min(W * 0.85, 300);
+    renderMiniLeaderboard(c, W / 2 - lbW / 2, cy, lbW, board.slice(0, 5), gameOverRank);
+    // Calculate leaderboard height for button positioning
+  }
 
   // Replay button
   const btnW = 180, btnH = 44;
