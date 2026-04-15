@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
 <title>廉颇·正义蹦蹦</title>
 <link rel="stylesheet" href="../../shared/styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
 :root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -15,7 +16,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action
 <body>
 <div id="game"></div>
 <script type="module">
-import{createCanvas,createGameLoop,createParticleSystem,createFloatingText,drawRoundRect,formatScore,COLORS}from'../../shared/engine.js';
+import{createGameLoop,formatScore,COLORS}from'../../shared/engine.js';
 import{loadHeroList,preloadAvatars,getAvatarImage,GAME_HEROES}from'../../shared/heroes.js';
 import{initAudio}from'../../shared/audio.js';
 import{addScore,getPersonalBest}from'../../shared/leaderboard.js';
@@ -27,69 +28,154 @@ import{getCurrentSeason}from'../../shared/season.js';
 const GAME_ID = 'jump';
 const HERO_ID = GAME_HEROES.LIANPO; // 105
 
-// Isometric projection
-const ISO_X = 0.75;   // x-component horizontal
-const ISO_Y = 0.375;  // x-component vertical (approx 30deg)
-
 // Charging
-const CHARGE_RATE = 1.0;     // power per second
-const MAX_CHARGE = 2.5;      // max seconds of charge
-const BASE_DISTANCE = 120;   // base distance at power=1
-const MAX_DISTANCE = 320;    // distance at max power
+const CHARGE_RATE = 1.0;
+const MAX_CHARGE = 2.5;
+const BASE_DISTANCE = 2.5;
+const MAX_DISTANCE = 6.5;
 
 // Jump
-const JUMP_DURATION = 0.45;  // seconds for the arc
+const JUMP_DURATION = 0.45;
 const ARC_HEIGHT_FACTOR = 0.6;
 
 // Platform
-const PLAT_MIN_GAP = 90;
-const PLAT_MAX_GAP = 180;
+const PLAT_MIN_GAP = 2.0;
+const PLAT_MAX_GAP = 4.0;
 const PLAT_TYPES = ['tower','barracks','buff','jungle','crystal'];
 const PLAT_COLORS = {
-  tower:    { top: '#5B7DB1', side: '#3A5280', front: '#2E4268', label: '防御塔' },
-  barracks: { top: '#6B8E6B', side: '#4A6B4A', front: '#3A5A3A', label: '兵营' },
-  buff:     { top: '#C0392B', side: '#962D22', front: '#7B241C', label: 'BUFF' },
-  jungle:   { top: '#8B7355', side: '#6B5642', front: '#554433', label: '野怪石台' },
-  crystal:  { top: '#A77BCA', side: '#7D5A9B', front: '#5E3F7A', label: '水晶' },
+  tower:    { color: 0x4A6FA5, label: '防御塔' },
+  barracks: { color: 0x5D7A3A, label: '兵营' },
+  buff:     { color: 0xC0392B, label: 'BUFF' },
+  jungle:   { color: 0x7A6B5A, label: '野怪石台' },
+  crystal:  { color: 0x9B59B6, label: '水晶' },
 };
 const PLAT_SIZES = {
-  tower: { w: 70, d: 70, h: 50 },
-  barracks: { w: 100, d: 100, h: 35 },
-  buff: { w: 50, d: 50, h: 55 },
-  jungle: { w: 75, d: 75, h: 45 },
-  crystal: { w: 65, d: 65, h: 65 },
+  tower:    { w: 1.2, h: 0.8, d: 1.2 },
+  barracks: { w: 1.8, h: 0.6, d: 1.8 },
+  buff:     { w: 1.0, h: 0.4, d: 1.0 },
+  jungle:   { w: 1.3, h: 0.7, d: 1.3 },
+  crystal:  { w: 1.2, h: 1.0, d: 1.2 },
 };
 
-// ═══════════════════════════════════════════════════════════
-// Init
-// ═══════════════════════════════════════════════════════════
-const screen = createCanvas(document.getElementById('game'));
-const { canvas, ctx, width: W } = screen;
-let H = screen.height;
+const MAX_PLATFORMS = 8;
 
-const particles = createParticleSystem(300);
-const floatingText = createFloatingText();
+// ═══════════════════════════════════════════════════════════
+// Screen Setup
+// ═══════════════════════════════════════════════════════════
+const container = document.getElementById('game');
+const W = window.innerWidth;
+const H = window.innerHeight;
+const DPR = Math.min(window.devicePixelRatio || 1, 3);
+
+// ═══════════════════════════════════════════════════════════
+// Three.js Scene Setup
+// ═══════════════════════════════════════════════════════════
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x1a1a2e, 0.035);
+
+const frustumSize = 15;
+const aspect = W / H;
+const camera = new THREE.OrthographicCamera(
+  frustumSize * aspect / -2, frustumSize * aspect / 2,
+  frustumSize / 2, frustumSize / -2, 0.1, 200
+);
+camera.position.set(10, 10, 10);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setSize(W, H);
+renderer.setPixelRatio(DPR);
+renderer.setClearColor(0x1a1a2e);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.domElement.style.width = '100%';
+renderer.domElement.style.height = '100%';
+renderer.domElement.style.touchAction = 'none';
+renderer.domElement.style.display = 'block';
+container.appendChild(renderer.domElement);
+
+// ═══════════════════════════════════════════════════════════
+// HUD Canvas (2D overlay)
+// ═══════════════════════════════════════════════════════════
+const hudCanvas = document.createElement('canvas');
+hudCanvas.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:1;width:100%;height:100%';
+container.appendChild(hudCanvas);
+const hudCtx = hudCanvas.getContext('2d');
+
+function resizeHud() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  hudCanvas.width = Math.round(w * DPR);
+  hudCanvas.height = Math.round(h * DPR);
+  hudCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resizeHud();
+
+// Design-space helpers for HUD
+const DESIGN_WIDTH = 390;
+function getHudScale() { return window.innerWidth / DESIGN_WIDTH; }
+function getDesignH() { return window.innerHeight / getHudScale(); }
+
+// ═══════════════════════════════════════════════════════════
+// Lighting
+// ═══════════════════════════════════════════════════════════
+const ambientLight = new THREE.AmbientLight(0x404060, 0.6);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xffeedd, 0.8);
+dirLight.position.set(8, 15, 8);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 1024;
+dirLight.shadow.mapSize.height = 1024;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 60;
+dirLight.shadow.camera.left = -20;
+dirLight.shadow.camera.right = 20;
+dirLight.shadow.camera.top = 20;
+dirLight.shadow.camera.bottom = -20;
+dirLight.shadow.bias = -0.001;
+scene.add(dirLight);
+
+const hemiLight = new THREE.HemisphereLight(0x6688cc, 0x443322, 0.4);
+scene.add(hemiLight);
+
+// ═══════════════════════════════════════════════════════════
+// Ground Plane
+// ═══════════════════════════════════════════════════════════
+const groundGeo = new THREE.PlaneGeometry(200, 200);
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x151525,
+  roughness: 0.95,
+  metalness: 0.05,
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.01;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ═══════════════════════════════════════════════════════════
+// Game State
+// ═══════════════════════════════════════════════════════════
 let audio = null;
-
-// Game state
-let state = 'loading'; // loading, title, playing, jumping, falling, gameover
+let state = 'loading';
 let score = 0;
-let combo = 0;          // consecutive perfect landings
+let combo = 0;
 let bestScore = 0;
 let jumpCount = 0;
 
 // Platforms
 let platforms = [];
+let platformMeshes = [];
 let currentPlatIdx = 0;
 
-// Camera (world offset)
-let camX = 0, camY = 0;
-let camTargetX = 0, camTargetY = 0;
+// Camera target (3D world)
+let cameraTarget = new THREE.Vector3(0, 0, 0);
 
 // Lian Po
-let lpX = 0, lpY = 0, lpZ = 0;       // world position
-let lpScaleY = 1;                       // squish factor
-let lpRotation = 0;                     // somersault during jump
+let lpX = 0, lpY = 0, lpZ = 0; // world x, z-height, world z (Three.js: x, y=height, z)
+let lpScaleY = 1;
+let lpRotation = 0;
 
 // Charging
 let charging = false;
@@ -100,43 +186,441 @@ let chargePower = 0;
 let jumping = false;
 let jumpT = 0;
 let jumpStartX = 0, jumpStartY = 0, jumpStartZ = 0;
-let jumpTargetX = 0, jumpTargetY = 0;
+let jumpTargetX = 0, jumpTargetZ = 0;
 let jumpArcHeight = 0;
-let jumpDir = 1; // 1 = right, -1 = left
 
 // Falling animation
 let falling = false;
 let fallT = 0;
-let fallStartZ = 0;
-
-// Screen shake
-let shakeX = 0, shakeY = 0;
-let shakeMag = 0, shakeDecay = 0;
+let fallStartY = 0;
 
 // Title animation
 let titlePulse = 0;
+let _animTime = 0;
+
+// Landing squish
+let _landSquishTimer = 0;
+
+// HUD floating texts
+let hudFloats = [];
+// HUD particles (simple 2D)
+let hudParticles = [];
+const MAX_HUD_PARTICLES = 200;
 
 // ═══════════════════════════════════════════════════════════
-// Isometric Projection
+// HUD Particle System (lightweight 2D)
 // ═══════════════════════════════════════════════════════════
-function toScreen(wx, wy, wz) {
-  const sx = (wx - wy) * ISO_X;
-  const sy = (wx + wy) * ISO_Y - wz;
-  return { x: sx - camX + W / 2, y: sy - camY + H / 2 + 60 };
+function emitHudParticles(sx, sy, opts = {}) {
+  const count = opts.count || 10;
+  const speed = opts.speed || 100;
+  const life = opts.life || 0.8;
+  const color = opts.color || '#D4A84B';
+  const size = opts.size || 4;
+  const gravity = opts.gravity || 0;
+  for (let i = 0; i < count && hudParticles.length < MAX_HUD_PARTICLES; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = speed * (0.5 + Math.random() * 0.5);
+    const l = life * (0.7 + Math.random() * 0.3);
+    hudParticles.push({
+      x: sx, y: sy,
+      vx: Math.cos(angle) * spd,
+      vy: Math.sin(angle) * spd,
+      life: l, maxLife: l,
+      color, size: size * (0.6 + Math.random() * 0.4),
+      gravity
+    });
+  }
+}
+
+function addHudFloat(sx, sy, text, opts = {}) {
+  hudFloats.push({
+    x: sx, y: sy, text,
+    color: opts.color || '#D4A84B',
+    size: opts.size || 24,
+    duration: opts.duration || 1,
+    rise: opts.rise || 50,
+    elapsed: 0
+  });
+}
+
+function updateHud(dt) {
+  // Particles
+  for (let i = hudParticles.length - 1; i >= 0; i--) {
+    const p = hudParticles[i];
+    p.life -= dt;
+    if (p.life <= 0) { hudParticles.splice(i, 1); continue; }
+    p.vy += p.gravity * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+  // Floats
+  for (let i = hudFloats.length - 1; i >= 0; i--) {
+    hudFloats[i].elapsed += dt;
+    if (hudFloats[i].elapsed >= hudFloats[i].duration) hudFloats.splice(i, 1);
+  }
+}
+
+function renderHudParticles() {
+  const s = getHudScale();
+  hudCtx.save();
+  for (const p of hudParticles) {
+    const alpha = Math.max(0, p.life / p.maxLife);
+    hudCtx.globalAlpha = alpha;
+    hudCtx.fillStyle = p.color;
+    hudCtx.beginPath();
+    hudCtx.arc(p.x / s, p.y / s, p.size, 0, Math.PI * 2);
+    hudCtx.fill();
+  }
+  hudCtx.restore();
+}
+
+function renderHudFloats() {
+  const s = getHudScale();
+  hudCtx.save();
+  hudCtx.textAlign = 'center';
+  hudCtx.textBaseline = 'middle';
+  for (const item of hudFloats) {
+    const t = item.elapsed / item.duration;
+    const alpha = 1 - t;
+    const yOff = item.rise * t;
+    const scale = 1 + t * 0.3;
+    hudCtx.globalAlpha = Math.max(0, alpha);
+    hudCtx.font = `bold ${Math.round(item.size * scale)}px sans-serif`;
+    const dx = item.x / s;
+    const dy = item.y / s - yOff;
+    hudCtx.lineWidth = 3;
+    hudCtx.strokeStyle = '#1A1A2E';
+    hudCtx.strokeText(item.text, dx, dy);
+    hudCtx.fillStyle = item.color;
+    hudCtx.fillText(item.text, dx, dy);
+  }
+  hudCtx.restore();
 }
 
 // ═══════════════════════════════════════════════════════════
-// Platform Generation
+// 3D Lian Po Character (Q-Version)
 // ═══════════════════════════════════════════════════════════
-function createPlatform(wx, wy, type) {
-  const size = PLAT_SIZES[type];
+const lianpo = new THREE.Group();
+
+// Body - squat cylinder (tank, very wide)
+const bodyGeo = new THREE.CylinderGeometry(0.35, 0.4, 0.5, 16);
+const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3B6BA5, roughness: 0.7, metalness: 0.3 });
+const body = new THREE.Mesh(bodyGeo, bodyMat);
+body.position.y = 0.25;
+body.castShadow = true;
+lianpo.add(body);
+
+// Armor belt (gold ring around body)
+const beltGeo = new THREE.TorusGeometry(0.37, 0.03, 8, 24);
+const beltMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.6, roughness: 0.3 });
+const belt = new THREE.Mesh(beltGeo, beltMat);
+belt.position.y = 0.25;
+belt.rotation.x = Math.PI / 2;
+lianpo.add(belt);
+
+// Head - sphere (big head for Q-version)
+const headGeo = new THREE.SphereGeometry(0.25, 16, 16);
+const headMat = new THREE.MeshStandardMaterial({ color: 0xF5D0A9, roughness: 0.8, metalness: 0.05 });
+const head = new THREE.Mesh(headGeo, headMat);
+head.position.y = 0.65;
+head.castShadow = true;
+lianpo.add(head);
+
+// Helmet - torus on top of head
+const helmetGeo = new THREE.TorusGeometry(0.18, 0.04, 8, 16);
+const helmetMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.6, roughness: 0.3 });
+const helmet = new THREE.Mesh(helmetGeo, helmetMat);
+helmet.position.y = 0.78;
+helmet.rotation.x = Math.PI / 2;
+lianpo.add(helmet);
+
+// Helmet crest (small spike on top)
+const crestGeo = new THREE.ConeGeometry(0.04, 0.15, 8);
+const crestMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.5, roughness: 0.4 });
+const crest = new THREE.Mesh(crestGeo, crestMat);
+crest.position.y = 0.9;
+lianpo.add(crest);
+
+// Shield - flat box on left side
+const shieldGeo = new THREE.BoxGeometry(0.1, 0.5, 0.4);
+const shieldMat = new THREE.MeshStandardMaterial({ color: 0x3B6BA5, metalness: 0.5, roughness: 0.5 });
+const shield = new THREE.Mesh(shieldGeo, shieldMat);
+shield.position.set(-0.4, 0.3, 0);
+shield.castShadow = true;
+lianpo.add(shield);
+
+// Shield emblem - gold stripe
+const emblemGeo = new THREE.BoxGeometry(0.12, 0.06, 0.3);
+const emblemMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.6, roughness: 0.3 });
+const emblem = new THREE.Mesh(emblemGeo, emblemMat);
+emblem.position.set(-0.4, 0.3, 0);
+lianpo.add(emblem);
+
+// Shield cross
+const crossH = new THREE.Mesh(
+  new THREE.BoxGeometry(0.13, 0.04, 0.22),
+  new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.5 })
+);
+crossH.position.set(-0.41, 0.3, 0);
+lianpo.add(crossH);
+const crossV = new THREE.Mesh(
+  new THREE.BoxGeometry(0.13, 0.22, 0.04),
+  new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.5 })
+);
+crossV.position.set(-0.41, 0.3, 0);
+lianpo.add(crossV);
+
+// Eyes - two small black spheres
+[-0.08, 0.08].forEach(xOff => {
+  const eyeGeo = new THREE.SphereGeometry(0.035, 8, 8);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+  const eye = new THREE.Mesh(eyeGeo, eyeMat);
+  eye.position.set(xOff, 0.67, 0.22);
+  lianpo.add(eye);
+  // Eye highlight
+  const hlGeo = new THREE.SphereGeometry(0.015, 6, 6);
+  const hlMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const hl = new THREE.Mesh(hlGeo, hlMat);
+  hl.position.set(xOff + 0.01, 0.68, 0.235);
+  lianpo.add(hl);
+});
+
+// Eyebrows - small boxes angled
+[-1, 1].forEach(side => {
+  const browGeo = new THREE.BoxGeometry(0.12, 0.02, 0.03);
+  const browMat = new THREE.MeshBasicMaterial({ color: 0xE8E8E8 });
+  const brow = new THREE.Mesh(browGeo, browMat);
+  brow.position.set(side * 0.08, 0.73, 0.22);
+  brow.rotation.z = side * -0.3;
+  lianpo.add(brow);
+});
+
+// Mouth - small dark line (thin box)
+const mouthGeo = new THREE.BoxGeometry(0.1, 0.01, 0.02);
+const mouthMat = new THREE.MeshBasicMaterial({ color: 0x8B5E3C });
+const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+mouth.position.set(0, 0.57, 0.23);
+lianpo.add(mouth);
+
+// Right arm (stubby)
+const rArmGeo = new THREE.SphereGeometry(0.08, 8, 8);
+const rArmMat = new THREE.MeshStandardMaterial({ color: 0x3B6BA5, roughness: 0.7, metalness: 0.2 });
+const rArm = new THREE.Mesh(rArmGeo, rArmMat);
+rArm.position.set(0.4, 0.28, 0);
+rArm.castShadow = true;
+lianpo.add(rArm);
+
+// Right fist
+const rFistGeo = new THREE.SphereGeometry(0.05, 8, 8);
+const rFistMat = new THREE.MeshStandardMaterial({ color: 0xF5D0A9, roughness: 0.8 });
+const rFist = new THREE.Mesh(rFistGeo, rFistMat);
+rFist.position.set(0.45, 0.22, 0.04);
+lianpo.add(rFist);
+
+// Left arm (holding shield)
+const lArmGeo = new THREE.SphereGeometry(0.07, 8, 8);
+const lArmMat = new THREE.MeshStandardMaterial({ color: 0x3B6BA5, roughness: 0.7, metalness: 0.2 });
+const lArm = new THREE.Mesh(lArmGeo, lArmMat);
+lArm.position.set(-0.32, 0.28, 0);
+lArm.castShadow = true;
+lianpo.add(lArm);
+
+// Legs (two small cylinders)
+[-0.12, 0.12].forEach(xOff => {
+  const legGeo = new THREE.CylinderGeometry(0.07, 0.08, 0.12, 8);
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x2C5282, roughness: 0.7 });
+  const leg = new THREE.Mesh(legGeo, legMat);
+  leg.position.set(xOff, 0.06, 0);
+  leg.castShadow = true;
+  lianpo.add(leg);
+  // Shoe
+  const shoeGeo = new THREE.SphereGeometry(0.06, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  const shoeMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, roughness: 0.6, metalness: 0.3 });
+  const shoe = new THREE.Mesh(shoeGeo, shoeMat);
+  shoe.position.set(xOff, 0.0, 0.02);
+  shoe.rotation.x = Math.PI;
+  lianpo.add(shoe);
+});
+
+// Hair spikes (white cones on top)
+const hairPositions = [
+  { x: -0.1, z: -0.05, h: 0.12, tilt: -0.3 },
+  { x: -0.02, z: -0.08, h: 0.15, tilt: -0.1 },
+  { x: 0.07, z: -0.06, h: 0.14, tilt: 0.15 },
+  { x: 0.14, z: -0.03, h: 0.1, tilt: 0.3 },
+];
+hairPositions.forEach(hp => {
+  const hGeo = new THREE.ConeGeometry(0.04, hp.h, 6);
+  const hMat = new THREE.MeshStandardMaterial({ color: 0xE8E8E8, roughness: 0.8 });
+  const hMesh = new THREE.Mesh(hGeo, hMat);
+  hMesh.position.set(hp.x, 0.85, hp.z);
+  hMesh.rotation.z = hp.tilt;
+  lianpo.add(hMesh);
+});
+
+// Beard (small white cone under chin)
+const beardGeo = new THREE.ConeGeometry(0.06, 0.08, 6);
+const beardMat = new THREE.MeshStandardMaterial({ color: 0xD8D8D8, roughness: 0.9 });
+const beard = new THREE.Mesh(beardGeo, beardMat);
+beard.position.set(0, 0.5, 0.18);
+beard.rotation.x = 0.3;
+lianpo.add(beard);
+
+// Blush (small pink flat circles)
+[-0.16, 0.16].forEach(xOff => {
+  const blushGeo = new THREE.CircleGeometry(0.04, 8);
+  const blushMat = new THREE.MeshBasicMaterial({ color: 0xE8888A, transparent: true, opacity: 0.3, side: THREE.DoubleSide });
+  const blush = new THREE.Mesh(blushGeo, blushMat);
+  blush.position.set(xOff, 0.6, 0.24);
+  lianpo.add(blush);
+});
+
+scene.add(lianpo);
+
+// ═══════════════════════════════════════════════════════════
+// Power Ring (3D torus around character)
+// ═══════════════════════════════════════════════════════════
+const powerRingGroup = new THREE.Group();
+scene.add(powerRingGroup);
+
+// ═══════════════════════════════════════════════════════════
+// Platform 3D Creation
+// ═══════════════════════════════════════════════════════════
+function createPlatformMesh(platData) {
+  const group = new THREE.Group();
+  const size = PLAT_SIZES[platData.type];
+  const colors = PLAT_COLORS[platData.type];
+  const isCylinder = (platData.type === 'buff' || platData.type === 'crystal');
+
+  if (isCylinder) {
+    // Cylinder platform
+    const topR = platData.type === 'crystal' ? 0.6 : 0.5;
+    const botR = platData.type === 'crystal' ? 0.8 : 0.5;
+    const geo = new THREE.CylinderGeometry(topR, botR, size.h, 24);
+    const mat = new THREE.MeshStandardMaterial({
+      color: colors.color,
+      metalness: 0.3,
+      roughness: 0.7,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = size.h / 2;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+
+    // Emissive glow ring on top
+    const glowGeo = new THREE.TorusGeometry(topR * 0.7, 0.03, 8, 24);
+    const glowMat = new THREE.MeshStandardMaterial({
+      color: colors.color,
+      emissive: colors.color,
+      emissiveIntensity: 0.8,
+      metalness: 0.1,
+      roughness: 0.5,
+    });
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.position.y = size.h + 0.02;
+    glow.rotation.x = Math.PI / 2;
+    group.add(glow);
+    group.userData.glowMesh = glow;
+  } else {
+    // Box platform
+    const geo = new THREE.BoxGeometry(size.w, size.h, size.d);
+    const mat = new THREE.MeshStandardMaterial({
+      color: colors.color,
+      metalness: 0.3,
+      roughness: 0.7,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.y = size.h / 2;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+
+    // Type-specific decorations
+    if (platData.type === 'tower') {
+      // Crenellations (small boxes on edges)
+      const crenSize = 0.08;
+      for (let i = 0; i < 4; i++) {
+        const t = (i + 0.5) / 4;
+        // Along x edge
+        const cx = new THREE.Mesh(
+          new THREE.BoxGeometry(crenSize, crenSize * 1.5, crenSize),
+          new THREE.MeshStandardMaterial({ color: 0x5B7DB1, metalness: 0.4, roughness: 0.6 })
+        );
+        cx.position.set(-size.w / 2 + size.w * t, size.h + crenSize * 0.7, size.d / 2);
+        cx.castShadow = true;
+        group.add(cx);
+        // Along z edge
+        const cz = cx.clone();
+        cz.position.set(size.w / 2, size.h + crenSize * 0.7, -size.d / 2 + size.d * t);
+        group.add(cz);
+      }
+    }
+
+    if (platData.type === 'barracks') {
+      // Roof ridge line
+      const ridgeGeo = new THREE.BoxGeometry(size.w * 0.9, 0.05, 0.05);
+      const ridgeMat = new THREE.MeshStandardMaterial({ color: 0x4A6B4A, roughness: 0.8 });
+      const ridge = new THREE.Mesh(ridgeGeo, ridgeMat);
+      ridge.position.y = size.h + 0.03;
+      group.add(ridge);
+    }
+
+    if (platData.type === 'jungle') {
+      // Slight rotation for organic feel
+      group.rotation.y = (Math.random() - 0.5) * 0.15;
+      // Small rocks on top
+      for (let i = 0; i < 3; i++) {
+        const rockGeo = new THREE.SphereGeometry(0.06 + Math.random() * 0.04, 6, 5);
+        const rockMat = new THREE.MeshStandardMaterial({ color: 0x665544, roughness: 0.9 });
+        const rock = new THREE.Mesh(rockGeo, rockMat);
+        rock.position.set(
+          (Math.random() - 0.5) * size.w * 0.6,
+          size.h + 0.03,
+          (Math.random() - 0.5) * size.d * 0.6
+        );
+        rock.castShadow = true;
+        group.add(rock);
+      }
+    }
+  }
+
+  // Landing zone indicator (small disc on top)
+  const lzGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.02, 16);
+  const lzMat = new THREE.MeshStandardMaterial({
+    color: 0xD4A84B,
+    emissive: 0xD4A84B,
+    emissiveIntensity: 0.3,
+    transparent: true,
+    opacity: 0,
+    metalness: 0.2,
+    roughness: 0.5,
+  });
+  const lz = new THREE.Mesh(lzGeo, lzMat);
+  lz.position.y = size.h + 0.02;
+  group.add(lz);
+  group.userData.landingZone = lz;
+
+  // Position in world
+  group.position.set(platData.wx, 0, platData.wz);
+  group.userData.platData = platData;
+  group.userData.baseY = 0;
+
+  return group;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Platform Generation (game logic)
+// ═══════════════════════════════════════════════════════════
+function createPlatform(wx, wz, type) {
   return {
-    wx, wy, wz: 0,
-    w: size.w, d: size.d, h: size.h,
+    wx, wz, h: PLAT_SIZES[type].h,
+    w: PLAT_SIZES[type].w,
+    d: PLAT_SIZES[type].d,
     type,
     landed: false,
     landAnim: 0,
-    glowAnim: 0,
+    _dir: 0,
   };
 }
 
@@ -155,796 +639,68 @@ function generateNextPlatform() {
   const difficulty = Math.min(jumpCount / 30, 1);
   const gap = PLAT_MIN_GAP + Math.random() * (PLAT_MAX_GAP - PLAT_MIN_GAP) * (0.7 + difficulty * 0.3);
 
-  let nx, ny;
+  let nx, nz;
   if (dir === 1) {
-    // Right: increase X
     nx = last.wx + gap;
-    ny = last.wy;
+    nz = last.wz;
   } else {
-    // Left: increase Y
     nx = last.wx;
-    ny = last.wy + gap;
+    nz = last.wz + gap;
   }
 
   const type = pickNextType(platforms.length);
-  const plat = createPlatform(nx, ny, type);
-  plat._dir = dir; // direction from previous to this
+  const plat = createPlatform(nx, nz, type);
+  plat._dir = dir;
   platforms.push(plat);
+
+  // Create 3D mesh
+  const mesh = createPlatformMesh(plat);
+  scene.add(mesh);
+  platformMeshes.push(mesh);
 }
 
 function initPlatforms() {
+  // Remove old meshes
+  for (const m of platformMeshes) scene.remove(m);
   platforms = [];
+  platformMeshes = [];
+
   const first = createPlatform(0, 0, 'tower');
   first.landed = true;
   platforms.push(first);
+
+  const mesh = createPlatformMesh(first);
+  scene.add(mesh);
+  platformMeshes.push(mesh);
+
   generateNextPlatform();
 }
 
 // ═══════════════════════════════════════════════════════════
-// Camera
+// Camera Control
 // ═══════════════════════════════════════════════════════════
 function centerCameraOnPlatform(p) {
-  const s = toScreenRaw(p.wx, p.wy, p.h);
-  camTargetX = s.x;
-  camTargetY = s.y;
-}
-
-function toScreenRaw(wx, wy, wz) {
-  return {
-    x: (wx - wy) * ISO_X,
-    y: (wx + wy) * ISO_Y - wz,
-  };
+  cameraTarget.set(p.wx, 0, p.wz);
 }
 
 function updateCamera(dt) {
-  const speed = 8;
-  camX += (camTargetX - camX) * Math.min(1, speed * dt);
-  camY += (camTargetY - camY) * Math.min(1, speed * dt);
-}
-
-// ═══════════════════════════════════════════════════════════
-// Drawing: Platform Shadow on Ground
-// ═══════════════════════════════════════════════════════════
-function drawPlatformShadow(p) {
-  const center = toScreen(p.wx, p.wy, 0);
-  const shadowOffsetX = 8;
-  const shadowOffsetY = 6;
-  ctx.save();
-  ctx.globalAlpha = 0.25;
-  ctx.fillStyle = '#000';
-  ctx.beginPath();
-  ctx.ellipse(center.x + shadowOffsetX, center.y + shadowOffsetY + 10, p.w * 0.42, p.d * 0.16, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-// ═══════════════════════════════════════════════════════════
-// Drawing: Platform (3D Shaded Isometric Box)
-// ═══════════════════════════════════════════════════════════
-let _animTime = 0;
-function drawPlatform(p, isCurrent, isNext) {
-  _animTime += 0.002;
-  const hw = p.w / 2;
-  const hd = p.d / 2;
-  const baseH = p.h + (p.landAnim || 0);
-  const colors = PLAT_COLORS[p.type];
-
-  // Draw ground shadow first
-  drawPlatformShadow(p);
-
-  const isCylinder = (p.type === 'buff' || p.type === 'crystal');
-
-  // 4 corners of top face
-  const tl = toScreen(p.wx - hw, p.wy - hd, baseH);
-  const tr = toScreen(p.wx + hw, p.wy - hd, baseH);
-  const br = toScreen(p.wx + hw, p.wy + hd, baseH);
-  const bl = toScreen(p.wx - hw, p.wy + hd, baseH);
-  const center = toScreen(p.wx, p.wy, baseH);
-
-  // Bottom corners
-  const br0 = toScreen(p.wx + hw, p.wy + hd, 0);
-  const bl0 = toScreen(p.wx - hw, p.wy + hd, 0);
-  const tr0 = toScreen(p.wx + hw, p.wy - hd, 0);
-  const center0 = toScreen(p.wx, p.wy, 0);
-
-  ctx.save();
-
-  if (isCylinder) {
-    // ── Cylindrical platform (buff / crystal) ──
-    const rx = p.w * 0.42;
-    const ry = p.d * 0.18;
-    const bodyH = baseH * ISO_Y * 2 + ry;
-
-    // Cylinder body (gradient)
-    const bodyGrad = ctx.createLinearGradient(center.x - rx, 0, center.x + rx, 0);
-    bodyGrad.addColorStop(0, colors.front);
-    bodyGrad.addColorStop(0.35, colors.side);
-    bodyGrad.addColorStop(0.65, colors.top);
-    bodyGrad.addColorStop(1, colors.front);
-    ctx.fillStyle = bodyGrad;
-    ctx.beginPath();
-    ctx.ellipse(center.x, center.y + ry, rx, ry, 0, 0, Math.PI); // bottom half of top ellipse
-    ctx.lineTo(center0.x + rx, center0.y + ry);
-    ctx.ellipse(center0.x, center0.y + ry, rx, ry, 0, 0, Math.PI, true); // bottom ellipse reversed
-    ctx.closePath();
-    ctx.fill();
-
-    // Bottom ellipse edge
-    ctx.beginPath();
-    ctx.ellipse(center0.x, center0.y + ry, rx, ry, 0, 0, Math.PI);
-    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Top ellipse (gradient fill)
-    const topGrad = ctx.createRadialGradient(center.x - rx * 0.2, center.y - ry * 0.3, 0, center.x, center.y, rx);
-    topGrad.addColorStop(0, lightenColor(colors.top, 40));
-    topGrad.addColorStop(0.6, colors.top);
-    topGrad.addColorStop(1, darkenColor(colors.top, 20));
-    ctx.beginPath();
-    ctx.ellipse(center.x, center.y, rx, ry, 0, 0, Math.PI * 2);
-    ctx.fillStyle = topGrad;
-    ctx.fill();
-
-    // Rim light on top ellipse
-    ctx.beginPath();
-    ctx.ellipse(center.x, center.y, rx, ry, 0, -Math.PI * 0.8, Math.PI * 0.1);
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Highlight spot on top
-    ctx.beginPath();
-    ctx.ellipse(center.x - rx * 0.2, center.y - ry * 0.2, rx * 0.25, ry * 0.25, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    ctx.fill();
-
-    // ── Buff glow aura ──
-    if (p.type === 'buff') {
-      const pulse = Math.sin(_animTime * 60) * 0.15 + 0.35;
-      const glowGrad = ctx.createRadialGradient(center.x, center.y, rx * 0.3, center.x, center.y, rx * 1.6);
-      glowGrad.addColorStop(0, `rgba(255,80,60,${pulse})`);
-      glowGrad.addColorStop(1, 'rgba(255,80,60,0)');
-      ctx.beginPath();
-      ctx.ellipse(center.x, center.y, rx * 1.6, ry * 2.2, 0, 0, Math.PI * 2);
-      ctx.fillStyle = glowGrad;
-      ctx.fill();
-    }
-
-    // ── Crystal shimmer ──
-    if (p.type === 'crystal') {
-      const shimmer = Math.sin(_animTime * 80) * 0.2 + 0.4;
-      const shimGrad = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, rx * 1.8);
-      shimGrad.addColorStop(0, `rgba(220,180,255,${shimmer})`);
-      shimGrad.addColorStop(0.5, `rgba(180,120,255,${shimmer * 0.4})`);
-      shimGrad.addColorStop(1, 'rgba(180,120,255,0)');
-      ctx.beginPath();
-      ctx.ellipse(center.x, center.y, rx * 1.8, ry * 2.5, 0, 0, Math.PI * 2);
-      ctx.fillStyle = shimGrad;
-      ctx.fill();
-
-      // Sparkle dots
-      for (let i = 0; i < 5; i++) {
-        const angle = _animTime * 40 + i * Math.PI * 2 / 5;
-        const dist = rx * (0.6 + Math.sin(_animTime * 30 + i) * 0.3);
-        const sx = center.x + Math.cos(angle) * dist;
-        const sy = center.y + Math.sin(angle) * dist * 0.4;
-        const sparkAlpha = Math.max(0, Math.sin(_animTime * 50 + i * 2)) * 0.7;
-        ctx.beginPath();
-        ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(255,255,255,${sparkAlpha})`;
-        ctx.fill();
-      }
-
-      // Light rays
-      ctx.save();
-      ctx.globalAlpha = 0.08 + Math.sin(_animTime * 40) * 0.04;
-      for (let i = 0; i < 4; i++) {
-        const angle = _animTime * 20 + i * Math.PI / 2;
-        const rayLen = rx * 2;
-        ctx.beginPath();
-        ctx.moveTo(center.x, center.y);
-        ctx.lineTo(center.x + Math.cos(angle) * rayLen, center.y + Math.sin(angle) * rayLen * 0.4);
-        ctx.strokeStyle = '#E0C0FF';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-  } else {
-    // ── Box platform (tower / barracks / jungle) ──
-
-    // Right side face with gradient (brighter — directional light from upper-right)
-    const rGrad = ctx.createLinearGradient(tr.x, tr.y, tr0.x, tr0.y);
-    rGrad.addColorStop(0, lightenColor(colors.side, 15));
-    rGrad.addColorStop(1, darkenColor(colors.side, 25));
-    ctx.beginPath();
-    ctx.moveTo(br.x, br.y); ctx.lineTo(tr.x, tr.y);
-    ctx.lineTo(tr0.x, tr0.y); ctx.lineTo(br0.x, br0.y);
-    ctx.closePath();
-    ctx.fillStyle = rGrad;
-    ctx.fill();
-
-    // Front face with gradient (darker — away from light)
-    const fGrad = ctx.createLinearGradient(bl.x, bl.y, bl0.x, bl0.y);
-    fGrad.addColorStop(0, lightenColor(colors.front, 5));
-    fGrad.addColorStop(1, darkenColor(colors.front, 30));
-    ctx.beginPath();
-    ctx.moveTo(bl.x, bl.y); ctx.lineTo(br.x, br.y);
-    ctx.lineTo(br0.x, br0.y); ctx.lineTo(bl0.x, bl0.y);
-    ctx.closePath();
-    ctx.fillStyle = fGrad;
-    ctx.fill();
-
-    // Top face with radial gradient (lighter center, darker edges — overhead light)
-    ctx.beginPath();
-    ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y);
-    ctx.lineTo(br.x, br.y); ctx.lineTo(bl.x, bl.y);
-    ctx.closePath();
-    // Use a radial gradient for the top face
-    const topCx = (tl.x + tr.x + br.x + bl.x) / 4;
-    const topCy = (tl.y + tr.y + br.y + bl.y) / 4;
-    const topR = Math.max(p.w, p.d) * 0.55;
-    const tGrad = ctx.createRadialGradient(topCx - topR * 0.15, topCy - topR * 0.15, 0, topCx, topCy, topR);
-    tGrad.addColorStop(0, lightenColor(colors.top, 35));
-    tGrad.addColorStop(0.5, colors.top);
-    tGrad.addColorStop(1, darkenColor(colors.top, 15));
-    ctx.fillStyle = tGrad;
-    ctx.fill();
-
-    // Highlight spot on top face
-    ctx.beginPath();
-    ctx.ellipse(topCx - topR * 0.15, topCy - topR * 0.2, topR * 0.2, topR * 0.12, -0.3, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)';
-    ctx.fill();
-
-    // ── Rim light: bright lines along top edges ──
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth = 1.2;
-    // Top-left to top-right (back edge)
-    ctx.beginPath(); ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y); ctx.stroke();
-    // Top-right to bottom-right (right edge)
-    ctx.beginPath(); ctx.moveTo(tr.x, tr.y); ctx.lineTo(br.x, br.y); ctx.stroke();
-    // Dimmer rim on front edges
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-    ctx.beginPath(); ctx.moveTo(br.x, br.y); ctx.lineTo(bl.x, bl.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(bl.x, bl.y); ctx.lineTo(tl.x, tl.y); ctx.stroke();
-
-    // Side edge lines (vertical) — subtle
-    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.moveTo(br.x, br.y); ctx.lineTo(br0.x, br0.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(bl.x, bl.y); ctx.lineTo(bl0.x, bl0.y); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(tr.x, tr.y); ctx.lineTo(tr0.x, tr0.y); ctx.stroke();
-
-    // ── Type-specific decorations ──
-    if (p.type === 'tower') {
-      // Crenellations on top edges (small notches)
-      const crenCount = 4;
-      const crenSize = 3;
-      for (let i = 0; i < crenCount; i++) {
-        const t = (i + 0.5) / crenCount;
-        // Along back edge (tl -> tr)
-        const cx1 = tl.x + (tr.x - tl.x) * t;
-        const cy1 = tl.y + (tr.y - tl.y) * t;
-        ctx.fillStyle = lightenColor(colors.top, 20);
-        ctx.fillRect(cx1 - crenSize / 2, cy1 - crenSize - 1, crenSize, crenSize);
-        // Along right edge (tr -> br)
-        const cx2 = tr.x + (br.x - tr.x) * t;
-        const cy2 = tr.y + (br.y - tr.y) * t;
-        ctx.fillRect(cx2 - crenSize / 2, cy2 - crenSize - 1, crenSize, crenSize);
-      }
-      // Metallic sheen on right side
-      ctx.save();
-      ctx.globalAlpha = 0.08;
-      ctx.beginPath();
-      ctx.moveTo(br.x, br.y); ctx.lineTo(tr.x, tr.y);
-      ctx.lineTo(tr0.x, tr0.y); ctx.lineTo(br0.x, br0.y);
-      ctx.closePath();
-      const metalGrad = ctx.createLinearGradient(tr.x, tr.y, br0.x, br0.y);
-      metalGrad.addColorStop(0, '#fff');
-      metalGrad.addColorStop(0.4, 'transparent');
-      metalGrad.addColorStop(0.6, '#fff');
-      metalGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = metalGrad;
-      ctx.fill();
-      ctx.restore();
-    }
-
-    if (p.type === 'barracks') {
-      // Horizontal wood-plank lines on front face
-      const planks = 5;
-      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-      ctx.lineWidth = 0.7;
-      for (let i = 1; i < planks; i++) {
-        const t = i / planks;
-        const lx = bl.x + (bl0.x - bl.x) * t;
-        const ly = bl.y + (bl0.y - bl.y) * t;
-        const rx2 = br.x + (br0.x - br.x) * t;
-        const ry2 = br.y + (br0.y - br.y) * t;
-        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(rx2, ry2); ctx.stroke();
-      }
-      // Same on right side
-      for (let i = 1; i < planks; i++) {
-        const t = i / planks;
-        const lx = tr.x + (tr0.x - tr.x) * t;
-        const ly = tr.y + (tr0.y - tr.y) * t;
-        const rx2 = br.x + (br0.x - br.x) * t;
-        const ry2 = br.y + (br0.y - br.y) * t;
-        ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(rx2, ry2); ctx.stroke();
-      }
-    }
-
-    if (p.type === 'jungle') {
-      // Rough edges — draw jagged overlay on top
-      ctx.save();
-      ctx.globalAlpha = 0.1;
-      for (let i = 0; i < 6; i++) {
-        const ox = (Math.sin(p.wx * 0.1 + i * 7) * 3);
-        const oy = (Math.cos(p.wy * 0.1 + i * 5) * 2);
-        ctx.beginPath();
-        ctx.arc(topCx + ox * (i - 3), topCy + oy * (i - 3), 3 + i, 0, Math.PI * 2);
-        ctx.fillStyle = i % 2 === 0 ? '#000' : '#fff';
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-  }
-
-  // ── Landing zone indicator on next platform ──
-  if (isNext) {
-    // Bullseye target on top face
-    const tc = center;
-    const ringR = Math.min(p.w, p.d) * 0.2;
-    // Outer ring
-    ctx.beginPath();
-    ctx.ellipse(tc.x, tc.y, ringR, ringR * 0.4, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    // Inner ring
-    ctx.beginPath();
-    ctx.ellipse(tc.x, tc.y, ringR * 0.5, ringR * 0.2, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-    ctx.stroke();
-    // Perfect zone golden glow
-    const pzGrad = ctx.createRadialGradient(tc.x, tc.y, 0, tc.x, tc.y, ringR * 0.5);
-    pzGrad.addColorStop(0, 'rgba(212,168,75,0.2)');
-    pzGrad.addColorStop(1, 'rgba(212,168,75,0)');
-    ctx.beginPath();
-    ctx.ellipse(tc.x, tc.y, ringR * 0.5, ringR * 0.2, 0, 0, Math.PI * 2);
-    ctx.fillStyle = pzGrad;
-    ctx.fill();
-  }
-
-  // ── Glow effect for current platform ──
-  if (isCurrent && !jumping && !falling) {
-    p.glowAnim += 0.03;
-    const glowAlpha = 0.12 + Math.sin(p.glowAnim) * 0.08;
-    if (isCylinder) {
-      const rx = p.w * 0.42;
-      const ry = p.d * 0.18;
-      ctx.beginPath();
-      ctx.ellipse(center.x, center.y, rx, ry, 0, 0, Math.PI * 2);
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y);
-      ctx.lineTo(br.x, br.y); ctx.lineTo(bl.x, bl.y);
-      ctx.closePath();
-    }
-    ctx.fillStyle = `rgba(212,168,75,${glowAlpha})`;
-    ctx.fill();
-  }
-
-  ctx.restore();
-}
-
-// ── Color utility helpers ──
-function lightenColor(hex, amount) {
-  const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + amount);
-  const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + amount);
-  const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + amount);
-  return `rgb(${r},${g},${b})`;
-}
-function darkenColor(hex, amount) {
-  const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount);
-  const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount);
-  const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount);
-  return `rgb(${r},${g},${b})`;
-}
-
-// ═══════════════════════════════════════════════════════════
-// Drawing: Lian Po (3D Pawn / Chess-piece style)
-// ═══════════════════════════════════════════════════════════
-let _chargeDustTimer = 0;
-let _landSquishTimer = 0;
-function drawLianPo() {
-  const pos = toScreen(lpX, lpY, lpZ);
-  const avatarImg = getAvatarImage(HERO_ID);
-
-  ctx.save();
-  ctx.translate(pos.x, pos.y);
-
-  if (jumping) {
-    ctx.rotate(lpRotation);
-  }
-
-  // Scale for squish/stretch
-  const scX = charging ? (1 + 0.15 * (chargePower / MAX_CHARGE)) : 1;
-  const scY = lpScaleY;
-
-  ctx.scale(scX, scY);
-
-  const bodyW = 32;
-  const bodyH = 38;
-  const headR = 17;
-  const baseRx = bodyW * 0.65;
-  const baseRy = 7;
-  const baseY = 0; // bottom of character
-
-  // ── Elliptical base (chess piece base) ──
-  const baseGrad = ctx.createLinearGradient(-baseRx, baseY - 3, baseRx, baseY + 3);
-  baseGrad.addColorStop(0, '#2C3E50');
-  baseGrad.addColorStop(0.5, '#4A6B8A');
-  baseGrad.addColorStop(1, '#1A2530');
-  ctx.beginPath();
-  ctx.ellipse(0, baseY, baseRx, baseRy, 0, 0, Math.PI * 2);
-  ctx.fillStyle = baseGrad;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 0.8;
-  ctx.stroke();
-
-  // ── Body: truncated oval shape (wider at bottom, narrower at top) ──
-  const bodyTop = -bodyH - 2;
-  const bodyBot = -4;
-  const bodyMid = (bodyTop + bodyBot) / 2;
-  const topW = bodyW * 0.42;
-  const botW = bodyW * 0.55;
-  const midW = bodyW * 0.58;
-
-  // Body fill with gradient
-  const bGrad = ctx.createLinearGradient(0, bodyTop, 0, bodyBot);
-  bGrad.addColorStop(0, '#5A8AB5');
-  bGrad.addColorStop(0.3, '#4A6B8A');
-  bGrad.addColorStop(1, '#2C3E50');
-  ctx.beginPath();
-  ctx.moveTo(-topW, bodyTop);
-  ctx.quadraticCurveTo(-midW, bodyMid, -botW, bodyBot);
-  ctx.lineTo(botW, bodyBot);
-  ctx.quadraticCurveTo(midW, bodyMid, topW, bodyTop);
-  ctx.closePath();
-  ctx.fillStyle = bGrad;
-  ctx.fill();
-  ctx.strokeStyle = '#1A2530';
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-
-  // ── Specular highlight arc (upper-left of body) ──
-  ctx.save();
-  ctx.globalAlpha = 0.2;
-  ctx.beginPath();
-  ctx.ellipse(-topW * 0.3, bodyTop + bodyH * 0.25, topW * 0.5, bodyH * 0.3, -0.2, -Math.PI * 0.4, Math.PI * 0.6);
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.restore();
-
-  // ── Armor belt / stripe ──
-  const beltY = bodyTop + bodyH * 0.45;
-  const beltHalfW = topW + (botW - topW) * 0.45;
-  ctx.fillStyle = '#D4A84B';
-  ctx.beginPath();
-  ctx.moveTo(-beltHalfW, beltY - 3);
-  ctx.quadraticCurveTo(0, beltY - 5, beltHalfW, beltY - 3);
-  ctx.lineTo(beltHalfW, beltY + 3);
-  ctx.quadraticCurveTo(0, beltY + 1, -beltHalfW, beltY + 3);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#B8860B';
-  ctx.lineWidth = 0.5;
-  ctx.stroke();
-
-  // ── Head: circle with avatar, slightly overlapping body top ──
-  const headCy = bodyTop - headR + 5;
-
-  // Head shadow behind (gives depth)
-  ctx.beginPath();
-  ctx.arc(1, headCy + 2, headR + 1, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(0,0,0,0.2)';
-  ctx.fill();
-
-  if (avatarImg) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(0, headCy, headR, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.drawImage(avatarImg, -headR, headCy - headR, headR * 2, headR * 2);
-    ctx.restore();
-    // Border ring with gradient
-    ctx.beginPath();
-    ctx.arc(0, headCy, headR, 0, Math.PI * 2);
-    ctx.strokeStyle = '#D4A84B';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-    // Rim highlight on head
-    ctx.beginPath();
-    ctx.arc(0, headCy, headR, -Math.PI * 0.8, -Math.PI * 0.1);
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  } else {
-    // Fallback head
-    const hGrad = ctx.createRadialGradient(-3, headCy - 3, 0, 0, headCy, headR);
-    hGrad.addColorStop(0, '#EAC85B');
-    hGrad.addColorStop(1, '#B8860B');
-    ctx.beginPath();
-    ctx.arc(0, headCy, headR, 0, Math.PI * 2);
-    ctx.fillStyle = hGrad;
-    ctx.fill();
-    ctx.strokeStyle = '#8B6508';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
-
-  ctx.restore();
-}
-
-function drawShadow() {
-  if (state !== 'playing' && state !== 'jumping') return;
-  const curPlat = platforms[currentPlatIdx];
-  const nextPlat = platforms[currentPlatIdx + 1];
-  const refPlat = (jumping && nextPlat) ? nextPlat : curPlat;
-  if (!refPlat) return;
-  const platH = refPlat.h;
-  const shadowPos = toScreen(lpX, lpY, platH);
-
-  const heightAbove = Math.max(0, lpZ - platH);
-  const shadowScale = Math.max(0.3, 1 - heightAbove / 250);
-  const shadowAlpha = Math.max(0.08, 0.5 * shadowScale);
-
-  ctx.save();
-  ctx.globalAlpha = shadowAlpha;
-  // Soft shadow with radial gradient
-  const sr = 18 * shadowScale;
-  const sry = 7 * shadowScale;
-  const sGrad = ctx.createRadialGradient(shadowPos.x, shadowPos.y + 2, 0, shadowPos.x, shadowPos.y + 2, sr);
-  sGrad.addColorStop(0, 'rgba(0,0,0,0.7)');
-  sGrad.addColorStop(0.6, 'rgba(0,0,0,0.3)');
-  sGrad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.beginPath();
-  ctx.ellipse(shadowPos.x, shadowPos.y + 2, sr, sry, 0, 0, Math.PI * 2);
-  ctx.fillStyle = sGrad;
-  ctx.fill();
-  ctx.restore();
-}
-
-// ═══════════════════════════════════════════════════════════
-// Drawing: Power Meter (circular arc around character)
-// ═══════════════════════════════════════════════════════════
-function drawPowerBar() {
-  if (!charging) return;
-
-  const pos = toScreen(lpX, lpY, lpZ);
-  const fill = chargePower / MAX_CHARGE;
-  const radius = 38;
-  const lineW = 4;
-  const startAngle = -Math.PI * 0.5;
-  const endAngle = startAngle + fill * Math.PI * 2;
-
-  ctx.save();
-
-  // Background ring (dim)
-  ctx.beginPath();
-  ctx.arc(pos.x, pos.y - 28, radius, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-  ctx.lineWidth = lineW;
-  ctx.stroke();
-
-  // Colored arc — green to yellow to orange to red
-  let arcColor;
-  if (fill < 0.35) {
-    arcColor = '#4CAF50';
-  } else if (fill < 0.6) {
-    arcColor = '#F1C40F';
-  } else if (fill < 0.85) {
-    arcColor = '#E67E22';
-  } else {
-    arcColor = '#E74C3C';
-  }
-  ctx.beginPath();
-  ctx.arc(pos.x, pos.y - 28, radius, startAngle, endAngle);
-  ctx.strokeStyle = arcColor;
-  ctx.lineWidth = lineW;
-  ctx.lineCap = 'round';
-  ctx.stroke();
-
-  // Glow on the arc
-  ctx.beginPath();
-  ctx.arc(pos.x, pos.y - 28, radius, startAngle, endAngle);
-  ctx.strokeStyle = arcColor;
-  ctx.lineWidth = lineW + 4;
-  ctx.globalAlpha = 0.2;
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  // At max power, pulse effect and shake hint
-  if (fill > 0.95) {
-    const pulse = Math.sin(_animTime * 100) * 0.3 + 0.5;
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y - 28, radius + 4, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(231,76,60,${pulse})`;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
-
-  // Charge percentage text
-  ctx.font = 'bold 12px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = arcColor;
-  ctx.fillText(Math.round(fill * 100) + '%', pos.x, pos.y - 28 - radius - 10);
-
-  ctx.restore();
-}
-
-// ═══════════════════════════════════════════════════════════
-// Drawing: HUD
-// ═══════════════════════════════════════════════════════════
-function drawHUD() {
-  const st = screen.safeTop + 10;
-  ctx.save();
-
-  // Score
-  ctx.font = 'bold 48px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-  ctx.strokeText(score, W / 2, st);
-  ctx.fillStyle = '#fff';
-  ctx.fillText(score, W / 2, st);
-
-  // Combo
-  if (combo >= 2) {
-    ctx.font = 'bold 18px sans-serif';
-    ctx.fillStyle = COLORS.GOLD;
-    ctx.fillText(`${combo}x COMBO`, W / 2, st + 54);
-  }
-
-  // Back button
-  ctx.font = '16px sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('< 返回', 16, st);
-
-  ctx.restore();
-}
-
-// ═══════════════════════════════════════════════════════════
-// Drawing: Background (3D depth with gradient, mountains, grid)
-// ═══════════════════════════════════════════════════════════
-function drawBackground() {
-  const season = getCurrentSeason();
-  const cs = season.colorScheme;
-
-  // ── Deep gradient sky (dark blue-purple at top, slightly lighter at bottom) ──
-  const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, '#0A0A2A');
-  grad.addColorStop(0.3, cs.secondary || '#0B1929');
-  grad.addColorStop(0.7, '#151535');
-  grad.addColorStop(1, '#1E1E3A');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
-
-  // ── Distant mountain silhouettes (faint, near top) ──
-  ctx.save();
-  ctx.globalAlpha = 0.06;
-  ctx.fillStyle = '#4A4A7A';
-  const mBase = H * 0.28;
-  ctx.beginPath();
-  ctx.moveTo(0, mBase);
-  ctx.lineTo(W * 0.08, mBase - 45);
-  ctx.lineTo(W * 0.18, mBase - 20);
-  ctx.lineTo(W * 0.30, mBase - 65);
-  ctx.lineTo(W * 0.42, mBase - 30);
-  ctx.lineTo(W * 0.55, mBase - 75);
-  ctx.lineTo(W * 0.65, mBase - 40);
-  ctx.lineTo(W * 0.78, mBase - 58);
-  ctx.lineTo(W * 0.88, mBase - 25);
-  ctx.lineTo(W, mBase - 50);
-  ctx.lineTo(W, mBase);
-  ctx.closePath();
-  ctx.fill();
-  // Second layer (slightly closer, lighter)
-  ctx.globalAlpha = 0.04;
-  ctx.fillStyle = '#6A6A9A';
-  const m2Base = H * 0.34;
-  ctx.beginPath();
-  ctx.moveTo(0, m2Base);
-  ctx.lineTo(W * 0.12, m2Base - 30);
-  ctx.lineTo(W * 0.25, m2Base - 10);
-  ctx.lineTo(W * 0.40, m2Base - 40);
-  ctx.lineTo(W * 0.58, m2Base - 15);
-  ctx.lineTo(W * 0.72, m2Base - 45);
-  ctx.lineTo(W * 0.90, m2Base - 20);
-  ctx.lineTo(W, m2Base - 35);
-  ctx.lineTo(W, m2Base);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-
-  // ── Faint cloud wisps ──
-  ctx.save();
-  ctx.globalAlpha = 0.03;
-  ctx.fillStyle = '#8888BB';
-  for (let i = 0; i < 3; i++) {
-    const cx = W * (0.2 + i * 0.3) + Math.sin(_animTime * 5 + i) * 15;
-    const cy = H * 0.15 + i * 20;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, 60 + i * 20, 8 + i * 3, 0, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
-
-  // ── Subtle isometric grid (ground plane reference) ──
-  ctx.save();
-  ctx.globalAlpha = 0.035;
-  ctx.strokeStyle = '#8888CC';
-  ctx.lineWidth = 0.5;
-  const gridStep = 60;
-  const ox = (camX * 0.3) % gridStep;
-  const oy = (camY * 0.3) % gridStep;
-  // Diagonal lines to suggest isometric ground
-  for (let x = -gridStep * 2 + ox; x < W + gridStep * 2; x += gridStep) {
-    ctx.beginPath();
-    ctx.moveTo(x, H * 0.6);
-    ctx.lineTo(x + H * 0.5, H);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x, H * 0.6);
-    ctx.lineTo(x - H * 0.5, H);
-    ctx.stroke();
-  }
-  // Horizontal scanlines for floor
-  ctx.globalAlpha = 0.02;
-  for (let y = H * 0.65 + oy; y < H; y += gridStep * 0.5) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  // ── Ground plane gradient at bottom (spatial reference) ──
-  ctx.save();
-  const floorGrad = ctx.createLinearGradient(0, H * 0.8, 0, H);
-  floorGrad.addColorStop(0, 'rgba(30,30,60,0)');
-  floorGrad.addColorStop(1, 'rgba(30,30,60,0.3)');
-  ctx.fillStyle = floorGrad;
-  ctx.fillRect(0, H * 0.8, W, H * 0.2);
-  ctx.restore();
-}
-
-// ═══════════════════════════════════════════════════════════
-// Screen Shake
-// ═══════════════════════════════════════════════════════════
-function triggerShake(magnitude, decay) {
-  shakeMag = magnitude;
-  shakeDecay = decay || 15;
-}
-
-function updateShake(dt) {
-  if (shakeMag > 0.1) {
-    shakeX = (Math.random() - 0.5) * shakeMag * 2;
-    shakeY = (Math.random() - 0.5) * shakeMag * 2;
-    shakeMag *= Math.pow(0.001, dt / (1 / shakeDecay));
-  } else {
-    shakeX = 0;
-    shakeY = 0;
-    shakeMag = 0;
-  }
+  const currentTarget = new THREE.Vector3(
+    camera.position.x - 10,
+    0,
+    camera.position.z - 10
+  );
+  currentTarget.lerp(cameraTarget, Math.min(1, 8 * dt));
+
+  camera.position.set(currentTarget.x + 10, 10, currentTarget.z + 10);
+  camera.lookAt(currentTarget);
+
+  // Update directional light to follow
+  dirLight.position.set(currentTarget.x + 8, 15, currentTarget.z + 8);
+  dirLight.target.position.copy(currentTarget);
+  dirLight.target.updateMatrixWorld();
+
+  // Update ground position to follow camera
+  ground.position.set(currentTarget.x, -0.01, currentTarget.z);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -955,13 +711,26 @@ function checkLanding() {
   if (!nextPlat) return 'miss';
 
   const dx = lpX - nextPlat.wx;
-  const dy = lpY - nextPlat.wy;
+  const dz = lpZ - nextPlat.wz;
   const hw = nextPlat.w / 2;
   const hd = nextPlat.d / 2;
 
-  if (Math.abs(dx) <= hw && Math.abs(dy) <= hd) {
-    // On platform!
-    const centerDist = Math.sqrt((dx / hw) ** 2 + (dy / hd) ** 2);
+  const isCylinder = (nextPlat.type === 'buff' || nextPlat.type === 'crystal');
+
+  if (isCylinder) {
+    const topR = nextPlat.type === 'crystal' ? 0.6 : 0.5;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist <= topR) {
+      const centerDist = dist / topR;
+      if (centerDist <= 0.3) return 'perfect';
+      if (centerDist <= 0.8) return 'normal';
+      return 'edge';
+    }
+    return 'miss';
+  }
+
+  if (Math.abs(dx) <= hw && Math.abs(dz) <= hd) {
+    const centerDist = Math.sqrt((dx / hw) ** 2 + (dz / hd) ** 2);
     if (centerDist <= 0.2) return 'perfect';
     if (centerDist <= 0.9) return 'normal';
     return 'edge';
@@ -969,15 +738,24 @@ function checkLanding() {
   return 'miss';
 }
 
+// Project 3D world position to 2D screen for HUD effects
+function worldToScreen(wx, wy, wz) {
+  const v = new THREE.Vector3(wx, wy, wz);
+  v.project(camera);
+  return {
+    x: (v.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-v.y * 0.5 + 0.5) * window.innerHeight
+  };
+}
+
 function handleLanding(result) {
   const nextPlat = platforms[currentPlatIdx + 1];
 
   if (result === 'miss') {
-    // Fall!
     state = 'falling';
     falling = true;
     fallT = 0;
-    fallStartZ = lpZ;
+    fallStartY = lpY;
     if (audio) audio.playDeath();
     return;
   }
@@ -986,15 +764,13 @@ function handleLanding(result) {
   currentPlatIdx++;
   jumpCount++;
   nextPlat.landed = true;
+  lpY = nextPlat.h;
 
-  // Snap position
-  lpZ = nextPlat.h;
-
-  // Landing squish animation (scaleY briefly compresses then bounces back)
+  // Landing squish
   lpScaleY = 0.65;
   _landSquishTimer = 0.25;
 
-  // Score calculation
+  // Score
   let points = 1;
   let isPerfect = result === 'perfect';
 
@@ -1005,61 +781,49 @@ function handleLanding(result) {
   } else {
     combo = 0;
   }
-
-  if (nextPlat.type === 'crystal') {
-    points += 5;
-  }
-
+  if (nextPlat.type === 'crystal') points += 5;
   score += points;
 
-  // Effects
-  const landPos = toScreen(nextPlat.wx, nextPlat.wy, nextPlat.h);
+  // Screen-space effects
+  const screenPos = worldToScreen(nextPlat.wx, nextPlat.h + 0.5, nextPlat.wz);
 
   if (isPerfect) {
-    // Perfect landing: golden particle burst + screen flash
-    particles.emit(landPos.x, landPos.y, {
+    emitHudParticles(screenPos.x, screenPos.y, {
       count: 25, speed: 140, life: 0.9, color: COLORS.GOLD, size: 4, gravity: 100
     });
-    // Extra white flash particles
-    particles.emit(landPos.x, landPos.y - 5, {
+    emitHudParticles(screenPos.x, screenPos.y - 5, {
       count: 8, speed: 60, life: 0.4, color: '#fff', size: 3, gravity: 50
     });
-    floatingText.add(landPos.x, landPos.y - 40, `PERFECT +${points}`, {
+    addHudFloat(screenPos.x, screenPos.y - 40, `PERFECT +${points}`, {
       color: COLORS.GOLD, size: 22, duration: 1.2
     });
-    triggerShake(6, 20);
     if (audio) {
       audio.playScore();
       if (combo >= 2) audio.playCombo(Math.min(combo, 8));
     }
   } else if (result === 'edge') {
-    // Edge landing: small dust
-    particles.emit(landPos.x, landPos.y, {
+    emitHudParticles(screenPos.x, screenPos.y, {
       count: 4, speed: 40, life: 0.35, color: '#999', size: 2.5, gravity: 70
     });
-    floatingText.add(landPos.x, landPos.y - 30, `+${points}`, {
+    addHudFloat(screenPos.x, screenPos.y - 30, `+${points}`, {
       color: '#ccc', size: 16, duration: 0.8
     });
-    triggerShake(2, 15);
     if (audio) audio.playHit();
   } else {
-    // Normal landing: dust burst radiating outward
-    particles.emit(landPos.x, landPos.y, {
+    emitHudParticles(screenPos.x, screenPos.y, {
       count: 8, speed: 90, life: 0.5, color: '#B0C4DE', size: 3, gravity: 90
     });
-    // Secondary dust puffs
-    particles.emit(landPos.x, landPos.y + 3, {
-      count: 4, speed: 30, life: 0.6, color: 'rgba(200,210,230,0.6)', size: 4, gravity: -15
-    });
-    floatingText.add(landPos.x, landPos.y - 35, `+${points}`, {
+    addHudFloat(screenPos.x, screenPos.y - 35, `+${points}`, {
       color: '#fff', size: 18, duration: 1
     });
-    triggerShake(4, 18);
     if (audio) audio.playHit();
   }
 
-  // Platform compress animation on land
-  nextPlat.landAnim = -8;
+  // Platform wobble (bounce via mesh scale)
+  const meshIdx = currentPlatIdx;
+  if (platformMeshes[meshIdx]) {
+    platformMeshes[meshIdx].userData.landBounce = 0.3;
+  }
 
   // Center camera
   centerCameraOnPlatform(nextPlat);
@@ -1067,16 +831,18 @@ function handleLanding(result) {
   // Generate next platform
   generateNextPlatform();
 
-  // Clean old platforms (keep last 5)
-  while (currentPlatIdx > 4) {
+  // Clean old platforms
+  while (currentPlatIdx > MAX_PLATFORMS - 3) {
     platforms.shift();
+    const oldMesh = platformMeshes.shift();
+    if (oldMesh) scene.remove(oldMesh);
     currentPlatIdx--;
   }
 
-  // Reset character state — snap Lian Po to platform center for clean next jump
+  // Reset character
   jumping = false;
   lpX = nextPlat.wx;
-  lpY = nextPlat.wy;
+  lpZ = nextPlat.wz;
   lpRotation = 0;
   lpScaleY = 1;
   state = 'playing';
@@ -1097,19 +863,17 @@ function executeJump() {
   const nextPlat = platforms[currentPlatIdx + 1];
   if (!nextPlat) return;
 
-  // Direction to next platform
   const dxWorld = nextPlat.wx - lpX;
-  const dyWorld = nextPlat.wy - lpY;
-  const dirAngle = Math.atan2(dyWorld, dxWorld);
+  const dzWorld = nextPlat.wz - lpZ;
+  const dirAngle = Math.atan2(dzWorld, dxWorld);
 
-  // Jump distance based on charge
   const distance = BASE_DISTANCE + (MAX_DISTANCE - BASE_DISTANCE) * (chargePower / MAX_CHARGE);
 
   jumpStartX = lpX;
   jumpStartY = lpY;
   jumpStartZ = lpZ;
   jumpTargetX = lpX + Math.cos(dirAngle) * distance;
-  jumpTargetY = lpY + Math.sin(dirAngle) * distance;
+  jumpTargetZ = lpZ + Math.sin(dirAngle) * distance;
   jumpArcHeight = distance * ARC_HEIGHT_FACTOR;
 
   jumping = true;
@@ -1119,16 +883,38 @@ function executeJump() {
   chargeTime = 0;
   chargePower = 0;
 
+  // Reset platform compress
+  if (platformMeshes[currentPlatIdx]) {
+    platformMeshes[currentPlatIdx].userData.landBounce = 0.15;
+  }
+
   if (audio) audio.playStart();
 }
 
 // ═══════════════════════════════════════════════════════════
 // Input Handling
 // ═══════════════════════════════════════════════════════════
-function handlePointerDown(x, y) {
+const DESIGN_W = 390;
+
+function eventToDesign(clientX, clientY) {
+  const scale = window.innerWidth / DESIGN_W;
+  return {
+    x: clientX / scale,
+    y: clientY / scale
+  };
+}
+
+function getSafeTop() {
+  const style = getComputedStyle(document.documentElement);
+  return (parseInt(style.getPropertyValue('--sat')) || 0) / getHudScale() + 10;
+}
+
+function handlePointerDown(clientX, clientY) {
+  const { x, y } = eventToDesign(clientX, clientY);
+  const designH = getDesignH();
+
   if (state === 'title') {
-    // Check back button
-    if (x < 80 && y < screen.safeTop + 40) {
+    if (x < 80 && y < getSafeTop() + 30) {
       goToLobby();
       return;
     }
@@ -1137,16 +923,14 @@ function handlePointerDown(x, y) {
   }
 
   if (state === 'gameover') {
-    // Replay button: drawn at cy+65, height 44, width 180
-    const cy = H / 2;
+    const cy = designH / 2;
     const btnY = cy + 65;
     const btnH = 44;
-    if (y >= btnY && y <= btnY + btnH && x > W / 2 - 90 && x < W / 2 + 90) {
+    if (y >= btnY && y <= btnY + btnH && x > DESIGN_W / 2 - 90 && x < DESIGN_W / 2 + 90) {
       startGame();
       return;
     }
-    // Back to lobby: drawn at btnY + btnH + 20 area
-    if (y >= btnY + btnH + 10 && y <= btnY + btnH + 45 && x > W / 2 - 60 && x < W / 2 + 60) {
+    if (y >= btnY + btnH + 10 && y <= btnY + btnH + 45 && x > DESIGN_W / 2 - 60 && x < DESIGN_W / 2 + 60) {
       goToLobby();
       return;
     }
@@ -1154,72 +938,47 @@ function handlePointerDown(x, y) {
   }
 
   if (state === 'playing') {
-    // Check back button
-    if (x < 80 && y < screen.safeTop + 40) {
+    if (x < 80 && y < getSafeTop() + 30) {
       goToLobby();
       return;
     }
-    // Start charging
     charging = true;
     chargeTime = 0;
     chargePower = 0;
-    state = 'playing'; // keep as playing, charge updates in update()
   }
 }
 
-function handlePointerUp(x, y) {
+function handlePointerUp() {
   if (charging && state === 'playing') {
     executeJump();
   }
 }
 
 // Mouse support
-canvas.addEventListener('mousedown', (e) => {
+container.addEventListener('mousedown', (e) => {
   e.preventDefault();
   ensureAudio();
-  const rect = canvas.getBoundingClientRect();
-  const scale = rect.width / W;
-  handlePointerDown(
-    (e.clientX - rect.left) / scale,
-    (e.clientY - rect.top) / scale
-  );
+  handlePointerDown(e.clientX, e.clientY);
 });
-canvas.addEventListener('mouseup', (e) => {
+container.addEventListener('mouseup', (e) => {
   e.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-  const scale = rect.width / W;
-  handlePointerUp(
-    (e.clientX - rect.left) / scale,
-    (e.clientY - rect.top) / scale
-  );
+  handlePointerUp();
 });
 
 // Touch support
-canvas.addEventListener('touchstart', (e) => {
+container.addEventListener('touchstart', (e) => {
   e.preventDefault();
   ensureAudio();
   const t = e.changedTouches[0];
-  const rect = canvas.getBoundingClientRect();
-  const scale = rect.width / W;
-  handlePointerDown(
-    (t.clientX - rect.left) / scale,
-    (t.clientY - rect.top) / scale
-  );
+  handlePointerDown(t.clientX, t.clientY);
 }, { passive: false });
 
-canvas.addEventListener('touchend', (e) => {
+container.addEventListener('touchend', (e) => {
   e.preventDefault();
-  const t = e.changedTouches[0];
-  const rect = canvas.getBoundingClientRect();
-  const scale = rect.width / W;
-  handlePointerUp(
-    (t.clientX - rect.left) / scale,
-    (t.clientY - rect.top) / scale
-  );
+  handlePointerUp();
 }, { passive: false });
 
-// Prevent context menu
-canvas.addEventListener('contextmenu', e => e.preventDefault());
+container.addEventListener('contextmenu', e => e.preventDefault());
 
 // ═══════════════════════════════════════════════════════════
 // Game Flow
@@ -1246,20 +1005,25 @@ function startGame() {
   chargePower = 0;
   lpRotation = 0;
   lpScaleY = 1;
-  shakeMag = 0;
+  hudFloats = [];
+  hudParticles = [];
 
   initPlatforms();
   const first = platforms[0];
   lpX = first.wx;
-  lpY = first.wy;
-  lpZ = first.h;
+  lpZ = first.wz;
+  lpY = first.h;
+
+  // Position character
+  lianpo.position.set(lpX, first.h, lpZ);
+  lianpo.visible = true;
 
   centerCameraOnPlatform(first);
-  camX = camTargetX;
-  camY = camTargetY;
+  // Snap camera immediately
+  camera.position.set(first.wx + 10, 10, first.wz + 10);
+  camera.lookAt(new THREE.Vector3(first.wx, 0, first.wz));
 
   state = 'playing';
-  particles.clear();
 
   if (audio) {
     audio.playBGM('hook');
@@ -1269,242 +1033,333 @@ function startGame() {
 
 function gameOver() {
   state = 'gameover';
-  if (audio) {
-    audio.stopBGM(1);
-  }
+  if (audio) audio.stopBGM(1);
 
-  // Save score
   const pb = getPersonalBest(GAME_ID);
   const isNew = !pb || score > pb.score;
   if (score > 0) {
     addScore(GAME_ID, score, HERO_ID, '廉颇');
   }
-  if (isNew && score > 0 && audio) {
-    audio.playNewRecord();
-  }
+  if (isNew && score > 0 && audio) audio.playNewRecord();
   bestScore = getPersonalBest(GAME_ID)?.score || 0;
 }
 
 // ═══════════════════════════════════════════════════════════
-// Title Screen
+// HUD Drawing Helpers
 // ═══════════════════════════════════════════════════════════
-function drawTitle() {
-  drawBackground();
+function drawRoundRect(ctx, x, y, w, h, radius) {
+  const r = Math.min(radius || 8, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
 
+// ═══════════════════════════════════════════════════════════
+// HUD: Title Screen
+// ═══════════════════════════════════════════════════════════
+function drawTitleHUD() {
+  const s = getHudScale();
+  const W = DESIGN_WIDTH;
+  const H = getDesignH();
+  const c = hudCtx;
   const breathe = Math.sin(titlePulse) * 0.03 + 1;
 
-  ctx.save();
+  // Semi-transparent backdrop
+  c.save();
+  c.globalAlpha = 0.7;
+  c.fillStyle = '#0A0A2A';
+  c.fillRect(0, 0, W, H);
+  c.globalAlpha = 1;
 
   // Title
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `bold ${Math.round(36 * breathe)}px sans-serif`;
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = '#000';
-  ctx.strokeText('廉颇·正义蹦蹦', W / 2, H * 0.22);
-  ctx.fillStyle = COLORS.GOLD;
-  ctx.fillText('廉颇·正义蹦蹦', W / 2, H * 0.22);
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.font = `bold ${Math.round(36 * breathe)}px sans-serif`;
+  c.lineWidth = 4;
+  c.strokeStyle = '#000';
+  c.strokeText('廉颇·正义蹦蹦', W / 2, H * 0.22);
+  c.fillStyle = COLORS.GOLD;
+  c.fillText('廉颇·正义蹦蹦', W / 2, H * 0.22);
 
   // Subtitle
-  ctx.font = '14px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.fillText('王者荣耀 · 小游戏合集', W / 2, H * 0.22 + 32);
+  c.font = '14px sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.5)';
+  c.fillText('王者荣耀 · 小游戏合集', W / 2, H * 0.22 + 32);
 
   // Avatar
   const avatarImg = getAvatarImage(HERO_ID);
   if (avatarImg) {
     const ax = W / 2, ay = H * 0.42;
     const ar = 45;
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(ax, ay, ar, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.drawImage(avatarImg, ax - ar, ay - ar, ar * 2, ar * 2);
-    ctx.restore();
-    ctx.beginPath();
-    ctx.arc(ax, ay, ar, 0, Math.PI * 2);
-    ctx.strokeStyle = COLORS.GOLD;
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    c.save();
+    c.beginPath();
+    c.arc(ax, ay, ar, 0, Math.PI * 2);
+    c.clip();
+    c.drawImage(avatarImg, ax - ar, ay - ar, ar * 2, ar * 2);
+    c.restore();
+    c.beginPath();
+    c.arc(ax, ay, ar, 0, Math.PI * 2);
+    c.strokeStyle = COLORS.GOLD;
+    c.lineWidth = 3;
+    c.stroke();
 
-    // Glow ring
-    ctx.beginPath();
-    ctx.arc(ax, ay, ar + 5, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(212,168,75,${0.3 + Math.sin(titlePulse * 2) * 0.15})`;
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    c.beginPath();
+    c.arc(ax, ay, ar + 5, 0, Math.PI * 2);
+    c.strokeStyle = `rgba(212,168,75,${0.3 + Math.sin(titlePulse * 2) * 0.15})`;
+    c.lineWidth = 2;
+    c.stroke();
   }
 
   // Hero name
-  ctx.font = 'bold 20px sans-serif';
-  ctx.fillStyle = '#fff';
-  ctx.fillText('廉颇', W / 2, H * 0.42 + 60);
-  ctx.font = '13px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.fillText('正义爆轰 · 坦克', W / 2, H * 0.42 + 82);
+  c.font = 'bold 20px sans-serif';
+  c.fillStyle = '#fff';
+  c.fillText('廉颇', W / 2, H * 0.42 + 60);
+  c.font = '13px sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.5)';
+  c.fillText('正义爆轰 · 坦克', W / 2, H * 0.42 + 82);
 
   // Personal best
-  ctx.font = '16px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.fillText(`最高分: ${bestScore}`, W / 2, H * 0.62);
+  c.font = '16px sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.7)';
+  c.fillText(`最高分: ${bestScore}`, W / 2, H * 0.62);
 
   // How to play
-  ctx.font = '13px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.fillText('长按蓄力 · 松手跳跃 · 精准落地', W / 2, H * 0.70);
+  c.font = '13px sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.4)';
+  c.fillText('长按蓄力 · 松手跳跃 · 精准落地', W / 2, H * 0.70);
 
   // Start hint
   const hintAlpha = 0.5 + Math.sin(titlePulse * 3) * 0.3;
-  ctx.font = 'bold 18px sans-serif';
-  ctx.fillStyle = `rgba(212,168,75,${hintAlpha})`;
-  ctx.fillText('点击任意位置开始', W / 2, H * 0.80);
+  c.font = 'bold 18px sans-serif';
+  c.fillStyle = `rgba(212,168,75,${hintAlpha})`;
+  c.fillText('点击任意位置开始', W / 2, H * 0.80);
 
   // Season
   const season = getCurrentSeason();
-  ctx.font = '12px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.fillText(`赛季: ${season.name}`, W / 2, H * 0.88);
+  c.font = '12px sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.3)';
+  c.fillText(`赛季: ${season.name}`, W / 2, H * 0.88);
 
   // Back button
-  ctx.textAlign = 'left';
-  ctx.font = '16px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.6)';
-  ctx.fillText('< 返回', 16, screen.safeTop + 10);
+  c.textAlign = 'left';
+  c.font = '16px sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.6)';
+  c.fillText('< 返回', 16, getSafeTop());
 
-  ctx.restore();
+  c.restore();
 }
 
 // ═══════════════════════════════════════════════════════════
-// Game Over Screen
+// HUD: Game Over Screen
 // ═══════════════════════════════════════════════════════════
-function drawGameOver() {
-  // Draw game scene underneath (frozen)
-  drawBackground();
-  drawScene();
+function drawGameOverHUD() {
+  const W = DESIGN_WIDTH;
+  const H = getDesignH();
+  const c = hudCtx;
 
-  // Overlay
-  ctx.save();
-  ctx.globalAlpha = 0.75;
-  ctx.fillStyle = '#1A1A2E';
-  ctx.fillRect(0, 0, W, H);
-  ctx.globalAlpha = 1;
+  c.save();
+  c.globalAlpha = 0.75;
+  c.fillStyle = '#1A1A2E';
+  c.fillRect(0, 0, W, H);
+  c.globalAlpha = 1;
 
   const cy = H / 2;
 
   // Title
-  ctx.textAlign = 'center';
-  ctx.font = 'bold 32px sans-serif';
-  ctx.fillStyle = COLORS.GOLD;
-  ctx.fillText('游戏结束', W / 2, cy - 80);
+  c.textAlign = 'center';
+  c.font = 'bold 32px sans-serif';
+  c.fillStyle = COLORS.GOLD;
+  c.fillText('游戏结束', W / 2, cy - 80);
 
   // Score
-  ctx.font = 'bold 56px sans-serif';
-  ctx.fillStyle = '#fff';
-  ctx.fillText(formatScore(score), W / 2, cy - 20);
+  c.font = 'bold 56px sans-serif';
+  c.fillStyle = '#fff';
+  c.fillText(formatScore(score), W / 2, cy - 20);
 
   // Best
   const pb = getPersonalBest(GAME_ID);
   const isNewRecord = pb && score >= pb.score && score > 0;
-  ctx.font = '16px sans-serif';
-  ctx.fillStyle = isNewRecord ? COLORS.GOLD : 'rgba(255,255,255,0.6)';
-  ctx.fillText(
+  c.font = '16px sans-serif';
+  c.fillStyle = isNewRecord ? COLORS.GOLD : 'rgba(255,255,255,0.6)';
+  c.fillText(
     isNewRecord ? `新纪录! 最高分: ${formatScore(bestScore)}` : `最高分: ${formatScore(bestScore)}`,
     W / 2, cy + 20
   );
 
   // Jump count
-  ctx.font = '14px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.4)';
-  ctx.fillText(`跳跃次数: ${jumpCount}`, W / 2, cy + 45);
+  c.font = '14px sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.4)';
+  c.fillText(`跳跃次数: ${jumpCount}`, W / 2, cy + 45);
 
   // Replay button
   const btnW = 180, btnH = 44;
   const btnX = W / 2 - btnW / 2, btnY = cy + 65;
-  ctx.fillStyle = COLORS.GOLD;
-  drawRoundRect(ctx, btnX, btnY, btnW, btnH, 22);
-  ctx.fill();
-  ctx.font = 'bold 18px sans-serif';
-  ctx.fillStyle = COLORS.DARK;
-  ctx.fillText('再来一局', W / 2, btnY + btnH / 2);
+  c.fillStyle = COLORS.GOLD;
+  drawRoundRect(c, btnX, btnY, btnW, btnH, 22);
+  c.fill();
+  c.font = 'bold 18px sans-serif';
+  c.fillStyle = COLORS.DARK;
+  c.fillText('再来一局', W / 2, btnY + btnH / 2);
 
   // Back to lobby
-  ctx.font = '15px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.fillText('返回大厅', W / 2, btnY + btnH + 30);
+  c.font = '15px sans-serif';
+  c.fillStyle = 'rgba(255,255,255,0.5)';
+  c.fillText('返回大厅', W / 2, btnY + btnH + 30);
 
-  ctx.restore();
+  c.restore();
 }
 
 // ═══════════════════════════════════════════════════════════
-// Scene Drawing (platforms + character)
+// HUD: In-Game
 // ═══════════════════════════════════════════════════════════
-function drawScene() {
-  // Draw platforms from back to front (sort by wx+wy for painter's algo)
-  const sorted = platforms
-    .map((p, i) => ({ p, i }))
-    .sort((a, b) => (a.p.wx + a.p.wy) - (b.p.wx + b.p.wy));
+function drawGameHUD() {
+  const W = DESIGN_WIDTH;
+  const c = hudCtx;
+  const st = getSafeTop();
 
-  for (const { p, i } of sorted) {
-    const isCurrent = i === currentPlatIdx;
-    const isNext = i === currentPlatIdx + 1;
-    drawPlatform(p, isCurrent, isNext);
+  c.save();
+
+  // Score
+  c.font = 'bold 48px sans-serif';
+  c.textAlign = 'center';
+  c.textBaseline = 'top';
+  c.lineWidth = 4;
+  c.strokeStyle = 'rgba(0,0,0,0.5)';
+  c.strokeText(score, W / 2, st);
+  c.fillStyle = '#fff';
+  c.fillText(score, W / 2, st);
+
+  // Combo
+  if (combo >= 2) {
+    c.font = 'bold 18px sans-serif';
+    c.fillStyle = COLORS.GOLD;
+    c.fillText(`${combo}x COMBO`, W / 2, st + 54);
   }
 
-  // Shadow
-  drawShadow();
+  // Back button
+  c.font = '16px sans-serif';
+  c.textAlign = 'left';
+  c.fillStyle = 'rgba(255,255,255,0.6)';
+  c.fillText('< 返回', 16, st);
 
-  // Lian Po (draw after platforms for correct layering)
-  if (state !== 'gameover') {
-    drawLianPo();
+  c.restore();
+
+  // Power meter (2D arc on HUD)
+  if (charging) {
+    drawPowerMeter(c);
   }
+}
+
+function drawPowerMeter(c) {
+  // Draw power ring at center-bottom area of screen
+  const W = DESIGN_WIDTH;
+  const H = getDesignH();
+
+  // Project character position to screen
+  const charScreen = worldToScreen(lpX, lpY + 0.5, lpZ);
+  const s = getHudScale();
+  const px = charScreen.x / s;
+  const py = charScreen.y / s;
+
+  const fill = chargePower / MAX_CHARGE;
+  const radius = 38;
+  const lineW = 4;
+  const startAngle = -Math.PI * 0.5;
+  const endAngle = startAngle + fill * Math.PI * 2;
+
+  c.save();
+
+  // Background ring
+  c.beginPath();
+  c.arc(px, py - 28, radius, 0, Math.PI * 2);
+  c.strokeStyle = 'rgba(255,255,255,0.1)';
+  c.lineWidth = lineW;
+  c.stroke();
+
+  // Color arc
+  let arcColor;
+  if (fill < 0.35) arcColor = '#4CAF50';
+  else if (fill < 0.6) arcColor = '#F1C40F';
+  else if (fill < 0.85) arcColor = '#E67E22';
+  else arcColor = '#E74C3C';
+
+  c.beginPath();
+  c.arc(px, py - 28, radius, startAngle, endAngle);
+  c.strokeStyle = arcColor;
+  c.lineWidth = lineW;
+  c.lineCap = 'round';
+  c.stroke();
+
+  // Glow
+  c.beginPath();
+  c.arc(px, py - 28, radius, startAngle, endAngle);
+  c.strokeStyle = arcColor;
+  c.lineWidth = lineW + 4;
+  c.globalAlpha = 0.2;
+  c.stroke();
+  c.globalAlpha = 1;
+
+  // Max power pulse
+  if (fill > 0.95) {
+    const pulse = Math.sin(_animTime * 100) * 0.3 + 0.5;
+    c.beginPath();
+    c.arc(px, py - 28, radius + 4, 0, Math.PI * 2);
+    c.strokeStyle = `rgba(231,76,60,${pulse})`;
+    c.lineWidth = 2;
+    c.stroke();
+  }
+
+  // Percentage text
+  c.font = 'bold 12px sans-serif';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillStyle = arcColor;
+  c.fillText(Math.round(fill * 100) + '%', px, py - 28 - radius - 10);
+
+  c.restore();
 }
 
 // ═══════════════════════════════════════════════════════════
 // Update
 // ═══════════════════════════════════════════════════════════
 function update(dt) {
-  H = screen.height;
+  _animTime += dt;
 
   if (state === 'title') {
-    titlePulse += dt * 3; // smooth animation speed
+    titlePulse += dt * 3;
+    // Animate character idle on title
+    lianpo.visible = false;
     return;
   }
 
   if (state === 'gameover') {
-    particles.update(dt);
-    floatingText.update(dt);
+    updateHud(dt);
     return;
   }
+
+  // Character visible
+  lianpo.visible = true;
 
   // Charging
   if (charging && state === 'playing') {
     chargeTime += dt;
     chargePower = Math.min(chargeTime * CHARGE_RATE, MAX_CHARGE);
 
-    // Squish effect (compress Y toward 0.6)
+    // Squish body
     lpScaleY = 1 - 0.4 * (chargePower / MAX_CHARGE);
 
-    // Shake at high charge
-    if (chargePower > MAX_CHARGE * 0.7) {
-      const intensity = (chargePower - MAX_CHARGE * 0.7) / (MAX_CHARGE * 0.3);
-      shakeMag = Math.max(shakeMag, intensity * 3);
-    }
-
-    // Platform compress
-    const curPlat = platforms[currentPlatIdx];
-    if (curPlat) {
-      curPlat.landAnim = -5 * (chargePower / MAX_CHARGE);
-    }
-
-    // Charging dust particles rising from feet
-    _chargeDustTimer += dt;
-    if (_chargeDustTimer > 0.08 && chargePower > 0.3) {
-      _chargeDustTimer = 0;
-      const feetPos = toScreen(lpX, lpY, lpZ);
-      particles.emit(feetPos.x + (Math.random() - 0.5) * 16, feetPos.y, {
-        count: 1, speed: 15, life: 0.4,
-        color: 'rgba(200,200,220,0.5)', size: 2, gravity: -40
-      });
+    // Platform compress during charge
+    if (platformMeshes[currentPlatIdx]) {
+      const compressAmt = 0.15 * (chargePower / MAX_CHARGE);
+      platformMeshes[currentPlatIdx].scale.y = 1 - compressAmt;
     }
   }
 
@@ -1515,67 +1370,46 @@ function update(dt) {
     if (jumpT >= 1) {
       jumpT = 1;
       lpX = jumpTargetX;
-      lpY = jumpTargetY;
+      lpZ = jumpTargetZ;
 
-      // Check landing
       const result = checkLanding();
       handleLanding(result);
     } else {
-      // Interpolate position
       lpX = jumpStartX + (jumpTargetX - jumpStartX) * jumpT;
-      lpY = jumpStartY + (jumpTargetY - jumpStartY) * jumpT;
+      lpZ = jumpStartZ + (jumpTargetZ - jumpStartZ) * jumpT;
 
-      // Parabolic arc
+      // Parabolic arc (Y is up in Three.js)
       const arcT = jumpT;
-      lpZ = jumpStartZ + jumpArcHeight * 4 * arcT * (1 - arcT);
+      lpY = jumpStartY + jumpArcHeight * 4 * arcT * (1 - arcT);
 
-      // Somersault rotation
+      // Somersault
       lpRotation = jumpT * Math.PI * 2;
 
-      // Stretch body while in air
+      // Stretch
       lpScaleY = 1 + 0.2 * Math.sin(jumpT * Math.PI);
-
-      // Jump trail particles (fading circles along the arc)
-      if (Math.random() < 0.6) {
-        const pos = toScreen(lpX, lpY, lpZ);
-        particles.emit(pos.x, pos.y + 5, {
-          count: 1, speed: 8, life: 0.5,
-          color: 'rgba(212,168,75,0.4)', size: 4, gravity: 15
-        });
-        // Secondary subtle trail
-        if (Math.random() < 0.3) {
-          particles.emit(pos.x + (Math.random() - 0.5) * 10, pos.y + 8, {
-            count: 1, speed: 5, life: 0.3,
-            color: 'rgba(180,200,220,0.3)', size: 2.5, gravity: 20
-          });
-        }
-      }
     }
   }
 
-  // Falling animation
+  // Falling
   if (state === 'falling' && falling) {
     fallT += dt;
-    lpZ = fallStartZ - fallT * fallT * 800; // accelerating fall
+    lpY = fallStartY - fallT * fallT * 15;
 
     if (fallT > 1.2) {
       falling = false;
       gameOver();
     }
 
-    // Shrink while falling
     lpScaleY = Math.max(0.3, 1 - fallT * 0.5);
     lpRotation += dt * 8;
   }
 
-  // Landing squish recovery (bounce back from 0.65 to 1.0)
+  // Landing squish recovery
   if (_landSquishTimer > 0 && !charging && !jumping && !falling) {
     _landSquishTimer -= dt;
     if (_landSquishTimer > 0.15) {
-      // Still squishing phase
       lpScaleY = 0.65 + (0.35 * (1 - (_landSquishTimer - 0.15) / 0.10));
     } else if (_landSquishTimer > 0) {
-      // Bounce back phase — slight overshoot to 1.05 then settle
       const t = 1 - _landSquishTimer / 0.15;
       lpScaleY = 1.0 + 0.08 * Math.sin(t * Math.PI);
     } else {
@@ -1583,46 +1417,123 @@ function update(dt) {
     }
   }
 
-  // Platform land animation recovery
-  for (const p of platforms) {
-    if (p.landAnim !== 0 && !charging) {
-      p.landAnim *= 0.85;
-      if (Math.abs(p.landAnim) < 0.2) p.landAnim = 0;
+  // Update character mesh
+  lianpo.position.set(lpX, lpY, lpZ);
+
+  // Idle bob
+  if (state === 'playing' && !charging && !jumping && !falling) {
+    lianpo.position.y = lpY + Math.sin(_animTime * 3) * 0.02;
+  }
+
+  // Squish/stretch
+  const scX = charging ? (1 + 0.15 * (chargePower / MAX_CHARGE)) : 1;
+  body.scale.set(scX, lpScaleY, scX);
+  head.position.y = 0.65 * lpScaleY;
+
+  // Rotation (somersault around X axis for jump)
+  if (jumping || falling) {
+    lianpo.rotation.x = lpRotation;
+    lianpo.rotation.y = 0;
+    lianpo.rotation.z = 0;
+  } else {
+    lianpo.rotation.set(0, 0, 0);
+  }
+
+  // Platform land bounce animation
+  for (let i = 0; i < platformMeshes.length; i++) {
+    const mesh = platformMeshes[i];
+    if (mesh.userData.landBounce) {
+      mesh.userData.landBounce *= 0.88;
+      if (mesh.userData.landBounce < 0.005) {
+        mesh.userData.landBounce = 0;
+        mesh.scale.y = 1;
+      } else {
+        mesh.scale.y = 1 - mesh.userData.landBounce * 0.5;
+      }
+    }
+    // Restore platform compress after jump
+    if (!charging && mesh.scale.y < 1 && !mesh.userData.landBounce) {
+      mesh.scale.y += dt * 3;
+      if (mesh.scale.y > 1) mesh.scale.y = 1;
+    }
+  }
+
+  // Update landing zone visibility
+  for (let i = 0; i < platformMeshes.length; i++) {
+    const mesh = platformMeshes[i];
+    const lz = mesh.userData.landingZone;
+    if (lz) {
+      const isNext = i === currentPlatIdx + 1;
+      lz.material.opacity = isNext ? (0.4 + Math.sin(_animTime * 4) * 0.2) : 0;
+    }
+    // Glow animation for buff/crystal
+    const glowMesh = mesh.userData.glowMesh;
+    if (glowMesh) {
+      glowMesh.material.emissiveIntensity = 0.5 + Math.sin(_animTime * 4) * 0.3;
+    }
+  }
+
+  // Crystal platform rotation
+  for (let i = 0; i < platforms.length; i++) {
+    if (platforms[i].type === 'crystal' && platformMeshes[i]) {
+      platformMeshes[i].rotation.y += dt * 0.5;
     }
   }
 
   updateCamera(dt);
-  updateShake(dt);
-  particles.update(dt);
-  floatingText.update(dt);
+  updateHud(dt);
 }
 
 // ═══════════════════════════════════════════════════════════
 // Render
 // ═══════════════════════════════════════════════════════════
 function render() {
-  ctx.save();
+  // Clear HUD
+  const hudW = DESIGN_WIDTH;
+  const hudH = getDesignH();
+  hudCtx.clearRect(0, 0, hudW, hudH);
 
-  // Apply screen shake
-  if (shakeMag > 0.1) {
-    ctx.translate(shakeX, shakeY);
-  }
+  // Render 3D scene
+  renderer.render(scene, camera);
+
+  // Render HUD overlay
+  hudCtx.save();
+  // Scale HUD to design width
+  const s = getHudScale();
+  // HUD canvas is already scaled via setTransform, but we need design coords
+  // setTransform was set to DPR scale. We need to add game design scale.
+  hudCtx.setTransform(DPR * s, 0, 0, DPR * s, 0, 0);
 
   if (state === 'title') {
-    drawTitle();
+    drawTitleHUD();
   } else if (state === 'gameover') {
-    drawGameOver();
+    drawGameOverHUD();
   } else {
-    drawBackground();
-    drawScene();
-    drawPowerBar();
-    particles.render(ctx);
-    floatingText.render(ctx);
-    drawHUD();
+    drawGameHUD();
+    renderHudParticles();
+    renderHudFloats();
   }
 
-  ctx.restore();
+  hudCtx.restore();
 }
+
+// ═══════════════════════════════════════════════════════════
+// Window Resize
+// ═══════════════════════════════════════════════════════════
+window.addEventListener('resize', () => {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const aspect = w / h;
+
+  camera.left = frustumSize * aspect / -2;
+  camera.right = frustumSize * aspect / 2;
+  camera.top = frustumSize / 2;
+  camera.bottom = frustumSize / -2;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(w, h);
+  resizeHud();
+});
 
 // ═══════════════════════════════════════════════════════════
 // Initialization
@@ -1630,13 +1541,17 @@ function render() {
 async function init() {
   state = 'loading';
 
-  // Draw loading
-  ctx.fillStyle = '#1A1A2E';
-  ctx.fillRect(0, 0, W, H);
-  ctx.font = '18px sans-serif';
-  ctx.fillStyle = COLORS.GOLD;
-  ctx.textAlign = 'center';
-  ctx.fillText('加载中...', W / 2, H / 2);
+  // Show loading on HUD
+  hudCtx.save();
+  const s = getHudScale();
+  hudCtx.setTransform(DPR * s, 0, 0, DPR * s, 0, 0);
+  hudCtx.fillStyle = '#1A1A2E';
+  hudCtx.fillRect(0, 0, DESIGN_WIDTH, getDesignH());
+  hudCtx.font = '18px sans-serif';
+  hudCtx.fillStyle = COLORS.GOLD;
+  hudCtx.textAlign = 'center';
+  hudCtx.fillText('加载中...', DESIGN_WIDTH / 2, getDesignH() / 2);
+  hudCtx.restore();
 
   // Load hero data
   await loadHeroList();
@@ -1645,6 +1560,15 @@ async function init() {
   // Get personal best
   const pb = getPersonalBest(GAME_ID);
   bestScore = pb ? pb.score : 0;
+
+  // Hide character initially
+  lianpo.visible = false;
+
+  // Set up initial scene with a platform for the background
+  initPlatforms();
+  centerCameraOnPlatform(platforms[0]);
+  camera.position.set(platforms[0].wx + 10, 10, platforms[0].wz + 10);
+  camera.lookAt(new THREE.Vector3(platforms[0].wx, 0, platforms[0].wz));
 
   // Start game loop
   const loop = createGameLoop(update, render);

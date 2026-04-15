@@ -90,6 +90,41 @@ body{min-height:100%;background:var(--bg);color:var(--text);
 .stat-card .val{font-size:20px;font-weight:800;color:var(--gold)}
 .stat-card .label{font-size:10px;color:var(--text-dim);margin-top:2px}
 
+/* Leaderboard Tabs */
+.lb-tabs{display:flex;gap:8px;padding:0 16px 10px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.lb-tabs::-webkit-scrollbar{display:none}
+.lb-tab{flex-shrink:0;padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;
+  color:var(--text-dim);background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);
+  cursor:pointer;transition:all 0.2s;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.lb-tab.active{color:var(--gold);background:rgba(212,168,75,0.15);border-color:rgba(212,168,75,0.3)}
+.lb-tab:active{transform:scale(0.95)}
+
+/* Leaderboard Content */
+.lb-content{padding:0 16px 16px}
+.lb-content .lb-table{width:100%;border-collapse:collapse}
+.lb-content .lb-row{display:flex;align-items:center;padding:8px 12px;border-radius:8px;margin-bottom:4px}
+.lb-content .lb-row:nth-child(odd){background:rgba(255,255,255,0.03)}
+.lb-content .lb-row:nth-child(even){background:rgba(255,255,255,0.01)}
+.lb-content .lb-rank{width:28px;font-weight:800;font-size:14px;text-align:center;flex-shrink:0}
+.lb-content .lb-rank.gold{color:#FFD700}
+.lb-content .lb-rank.silver{color:#C0C0C0}
+.lb-content .lb-rank.bronze{color:#CD7F32}
+.lb-content .lb-rank.normal{color:var(--text-dim)}
+.lb-content .lb-name{flex:1;font-size:13px;color:var(--text);margin-left:10px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lb-content .lb-score{font-size:13px;font-weight:700;color:var(--gold);margin-left:auto;padding-left:8px}
+.lb-content .lb-empty{text-align:center;padding:20px;font-size:12px;color:var(--text-dim)}
+.lb-content .lb-alltime{margin-top:10px;padding:8px 12px;border-radius:8px;
+  background:rgba(212,168,75,0.06);border:1px solid rgba(212,168,75,0.12);
+  font-size:12px;color:var(--text-dim);display:flex;justify-content:space-between;align-items:center}
+.lb-content .lb-alltime .at-label{color:var(--text-dim)}
+.lb-content .lb-alltime .at-val{color:var(--gold);font-weight:700}
+
+@media(min-width:500px){
+  .lb-tabs{max-width:480px;margin:0 auto}
+  .lb-content{max-width:480px;margin:0 auto;padding-bottom:16px}
+}
+
 /* Footer */
 .footer{text-align:center;padding:16px 20px 24px;color:var(--text-dim);font-size:11px;opacity:0.4}
 
@@ -167,13 +202,17 @@ body{min-height:100%;background:var(--bg);color:var(--text);
     <div class="stat-card"><div class="val" id="statGames">5</div><div class="label">可玩游戏</div></div>
   </div>
 
+  <div class="section-label">今日排行</div>
+  <div class="lb-tabs" id="lbTabs"></div>
+  <div class="lb-content" id="lbContent"></div>
+
   <div class="footer">碎片时间 · 即时娱乐</div>
 </div>
 
 <script type="module">
 import { loadHeroList, preloadAvatars, preloadSkin, getAvatarUrl, getSkinUrl, GAME_HEROES } from './shared/heroes.js';
 import { getCurrentSeason, getSeasonTimeRemaining } from './shared/season.js';
-import { getPersonalBest } from './shared/leaderboard.js';
+import { getPersonalBest, getLeaderboard, getAllTimeBest } from './shared/leaderboard.js';
 import { initAudio } from './shared/audio.js';
 
 let audio = null;
@@ -264,11 +303,64 @@ function loadCardBackgrounds(){
   });
 }
 
+// ── Lobby Leaderboard ──
+let activeTab = 0;
+
+function renderLobbyLeaderboard(gameIndex) {
+  activeTab = gameIndex;
+  const g = GAMES[gameIndex];
+
+  // Update tabs
+  document.querySelectorAll('.lb-tab').forEach((tab, i) => {
+    tab.classList.toggle('active', i === gameIndex);
+  });
+
+  const container = document.getElementById('lbContent');
+  const board = getLeaderboard(g.id);
+  const allTime = getAllTimeBest(g.id);
+  const best = allTime.length > 0 ? allTime[0] : null;
+
+  let html = '';
+  if (board.length === 0) {
+    html = '<div class="lb-empty">暂无记录，快去挑战吧!</div>';
+  } else {
+    for (const entry of board) {
+      const rankClass = entry.rank === 1 ? 'gold' : entry.rank === 2 ? 'silver' : entry.rank === 3 ? 'bronze' : 'normal';
+      html += `<div class="lb-row">
+        <div class="lb-rank ${rankClass}">${entry.rank}</div>
+        <div class="lb-name">${entry.name || '无名侠客'}</div>
+        <div class="lb-score">${fmt(entry.score)}</div>
+      </div>`;
+    }
+  }
+
+  if (best) {
+    html += `<div class="lb-alltime"><span class="at-label">历史最佳</span><span class="at-val">${best.name} — ${fmt(best.score)}</span></div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+function initLobbyLeaderboard() {
+  const tabsEl = document.getElementById('lbTabs');
+  const tabNames = ['钟馗', '兰陵王', '貂蝉', '廉颇', '李白'];
+  tabsEl.innerHTML = '';
+  GAMES.forEach((g, i) => {
+    const tab = document.createElement('div');
+    tab.className = 'lb-tab' + (i === 0 ? ' active' : '');
+    tab.textContent = tabNames[i] || g.title.split('·')[0].trim();
+    tab.addEventListener('click', () => renderLobbyLeaderboard(i));
+    tabsEl.appendChild(tab);
+  });
+  renderLobbyLeaderboard(0);
+}
+
 async function init(){
   // Phase 1: Render cards immediately (avatars load lazily via <img>)
   renderCards();
   updateSeason();
   updateStats();
+  initLobbyLeaderboard();
 
   // Show app immediately — don't wait for API
   document.getElementById('loader').classList.add('hide');
