@@ -19,7 +19,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action
 import{createGameLoop,formatScore,COLORS}from'../../shared/engine.js';
 import{loadHeroList,preloadAvatars,getAvatarImage,GAME_HEROES}from'../../shared/heroes.js';
 import{initAudio}from'../../shared/audio.js';
-import{addScore,getPersonalBest}from'../../shared/leaderboard.js';
+import{addScore,getPersonalBest,getLeaderboard,isTopScore,getPlayerName}from'../../shared/leaderboard.js';
+import{showNicknameInput,renderMiniLeaderboard}from'../../shared/leaderboard-ui.js';
 import{getCurrentSeason}from'../../shared/season.js';
 
 // ═══════════════════════════════════════════════════════════
@@ -163,6 +164,8 @@ let score = 0;
 let combo = 0;
 let bestScore = 0;
 let jumpCount = 0;
+let gameOverReady = false;
+let gameOverRank = -1;
 
 // Platforms
 let platforms = [];
@@ -298,181 +301,292 @@ function renderHudFloats() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// 3D Lian Po Character (Q-Version)
+// 3D Lian Po Character — Honor of Kings Accurate Colors
+// RED + BLACK + GOLD fierce warrior with massive shield
 // ═══════════════════════════════════════════════════════════
 const lianpo = new THREE.Group();
 
-// Body - squat cylinder (tank, very wide)
+// Color palette
+const C = {
+  armor: 0x1a1a1a,
+  armorRed: 0xCC2200,
+  gold: 0xBB9933,
+  skin: 0xD4A574,
+  hair: 0x1a1a1a,
+  gemRed: 0xFF3300,
+  shieldRed: 0xAA1100,
+  shieldGold: 0xCCAA44,
+  orbGlow: 0xFFFFCC,
+  blade: 0x333333,
+  bladeEdge: 0xCC2200,
+};
+const armorMat = new THREE.MeshStandardMaterial({ color: C.armor, metalness: 0.4, roughness: 0.6 });
+const armorRedMat = new THREE.MeshStandardMaterial({ color: C.armorRed, metalness: 0.4, roughness: 0.6 });
+const goldMat = new THREE.MeshStandardMaterial({ color: C.gold, metalness: 0.6, roughness: 0.3 });
+const skinMat = new THREE.MeshStandardMaterial({ color: C.skin, roughness: 0.8, metalness: 0.05 });
+
+// ── Body (torso) ──
 const bodyGeo = new THREE.CylinderGeometry(0.35, 0.4, 0.5, 16);
-const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3B6BA5, roughness: 0.7, metalness: 0.3 });
-const body = new THREE.Mesh(bodyGeo, bodyMat);
+const body = new THREE.Mesh(bodyGeo, armorMat);
 body.position.y = 0.25;
 body.castShadow = true;
 lianpo.add(body);
 
-// Armor belt (gold ring around body)
-const beltGeo = new THREE.TorusGeometry(0.37, 0.03, 8, 24);
-const beltMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.6, roughness: 0.3 });
-const belt = new THREE.Mesh(beltGeo, beltMat);
-belt.position.y = 0.25;
+// Red accent stripe across chest
+const stripeGeo = new THREE.BoxGeometry(0.72, 0.06, 0.35);
+const stripe = new THREE.Mesh(stripeGeo, armorRedMat);
+stripe.position.y = 0.32;
+stripe.castShadow = true;
+lianpo.add(stripe);
+
+// Chest gem (red, glowing)
+const gemGeo = new THREE.SphereGeometry(0.05, 12, 12);
+const gemMat = new THREE.MeshStandardMaterial({ color: C.gemRed, emissive: C.gemRed, emissiveIntensity: 0.7, metalness: 0.3, roughness: 0.3 });
+const gem = new THREE.Mesh(gemGeo, gemMat);
+gem.position.set(0, 0.35, 0.35);
+lianpo.add(gem);
+
+// Gold belt
+const beltGeo = new THREE.TorusGeometry(0.38, 0.025, 8, 24);
+const belt = new THREE.Mesh(beltGeo, goldMat);
+belt.position.y = 0.12;
 belt.rotation.x = Math.PI / 2;
 lianpo.add(belt);
 
-// Head - sphere (big head for Q-version)
-const headGeo = new THREE.SphereGeometry(0.25, 16, 16);
-const headMat = new THREE.MeshStandardMaterial({ color: 0xF5D0A9, roughness: 0.8, metalness: 0.05 });
-const head = new THREE.Mesh(headGeo, headMat);
+// ── Head ──
+const headGeo = new THREE.SphereGeometry(0.22, 16, 16);
+const head = new THREE.Mesh(headGeo, skinMat);
 head.position.y = 0.65;
 head.castShadow = true;
 lianpo.add(head);
 
-// Helmet - torus on top of head
-const helmetGeo = new THREE.TorusGeometry(0.18, 0.04, 8, 16);
-const helmetMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.6, roughness: 0.3 });
-const helmet = new THREE.Mesh(helmetGeo, helmetMat);
-helmet.position.y = 0.78;
-helmet.rotation.x = Math.PI / 2;
-lianpo.add(helmet);
-
-// Helmet crest (small spike on top)
-const crestGeo = new THREE.ConeGeometry(0.04, 0.15, 8);
-const crestMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.5, roughness: 0.4 });
-const crest = new THREE.Mesh(crestGeo, crestMat);
-crest.position.y = 0.9;
-lianpo.add(crest);
-
-// Shield - flat box on left side
-const shieldGeo = new THREE.BoxGeometry(0.1, 0.5, 0.4);
-const shieldMat = new THREE.MeshStandardMaterial({ color: 0x3B6BA5, metalness: 0.5, roughness: 0.5 });
-const shield = new THREE.Mesh(shieldGeo, shieldMat);
-shield.position.set(-0.4, 0.3, 0);
-shield.castShadow = true;
-lianpo.add(shield);
-
-// Shield emblem - gold stripe
-const emblemGeo = new THREE.BoxGeometry(0.12, 0.06, 0.3);
-const emblemMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.6, roughness: 0.3 });
-const emblem = new THREE.Mesh(emblemGeo, emblemMat);
-emblem.position.set(-0.4, 0.3, 0);
-lianpo.add(emblem);
-
-// Shield cross
-const crossH = new THREE.Mesh(
-  new THREE.BoxGeometry(0.13, 0.04, 0.22),
-  new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.5 })
-);
-crossH.position.set(-0.41, 0.3, 0);
-lianpo.add(crossH);
-const crossV = new THREE.Mesh(
-  new THREE.BoxGeometry(0.13, 0.22, 0.04),
-  new THREE.MeshStandardMaterial({ color: 0xD4A84B, metalness: 0.5 })
-);
-crossV.position.set(-0.41, 0.3, 0);
-lianpo.add(crossV);
-
-// Eyes - two small black spheres
-[-0.08, 0.08].forEach(xOff => {
-  const eyeGeo = new THREE.SphereGeometry(0.035, 8, 8);
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-  const eye = new THREE.Mesh(eyeGeo, eyeMat);
-  eye.position.set(xOff, 0.67, 0.22);
-  lianpo.add(eye);
-  // Eye highlight
-  const hlGeo = new THREE.SphereGeometry(0.015, 6, 6);
-  const hlMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const hl = new THREE.Mesh(hlGeo, hlMat);
-  hl.position.set(xOff + 0.01, 0.68, 0.235);
-  lianpo.add(hl);
-});
-
-// Eyebrows - small boxes angled
-[-1, 1].forEach(side => {
-  const browGeo = new THREE.BoxGeometry(0.12, 0.02, 0.03);
-  const browMat = new THREE.MeshBasicMaterial({ color: 0xE8E8E8 });
-  const brow = new THREE.Mesh(browGeo, browMat);
-  brow.position.set(side * 0.08, 0.73, 0.22);
-  brow.rotation.z = side * -0.3;
-  lianpo.add(brow);
-});
-
-// Mouth - small dark line (thin box)
-const mouthGeo = new THREE.BoxGeometry(0.1, 0.01, 0.02);
-const mouthMat = new THREE.MeshBasicMaterial({ color: 0x8B5E3C });
-const mouth = new THREE.Mesh(mouthGeo, mouthMat);
-mouth.position.set(0, 0.57, 0.23);
-lianpo.add(mouth);
-
-// Right arm (stubby)
-const rArmGeo = new THREE.SphereGeometry(0.08, 8, 8);
-const rArmMat = new THREE.MeshStandardMaterial({ color: 0x3B6BA5, roughness: 0.7, metalness: 0.2 });
-const rArm = new THREE.Mesh(rArmGeo, rArmMat);
-rArm.position.set(0.4, 0.28, 0);
-rArm.castShadow = true;
-lianpo.add(rArm);
-
-// Right fist
-const rFistGeo = new THREE.SphereGeometry(0.05, 8, 8);
-const rFistMat = new THREE.MeshStandardMaterial({ color: 0xF5D0A9, roughness: 0.8 });
-const rFist = new THREE.Mesh(rFistGeo, rFistMat);
-rFist.position.set(0.45, 0.22, 0.04);
-lianpo.add(rFist);
-
-// Left arm (holding shield)
-const lArmGeo = new THREE.SphereGeometry(0.07, 8, 8);
-const lArmMat = new THREE.MeshStandardMaterial({ color: 0x3B6BA5, roughness: 0.7, metalness: 0.2 });
-const lArm = new THREE.Mesh(lArmGeo, lArmMat);
-lArm.position.set(-0.32, 0.28, 0);
-lArm.castShadow = true;
-lianpo.add(lArm);
-
-// Legs (two small cylinders)
-[-0.12, 0.12].forEach(xOff => {
-  const legGeo = new THREE.CylinderGeometry(0.07, 0.08, 0.12, 8);
-  const legMat = new THREE.MeshStandardMaterial({ color: 0x2C5282, roughness: 0.7 });
-  const leg = new THREE.Mesh(legGeo, legMat);
-  leg.position.set(xOff, 0.06, 0);
-  leg.castShadow = true;
-  lianpo.add(leg);
-  // Shoe
-  const shoeGeo = new THREE.SphereGeometry(0.06, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  const shoeMat = new THREE.MeshStandardMaterial({ color: 0xD4A84B, roughness: 0.6, metalness: 0.3 });
-  const shoe = new THREE.Mesh(shoeGeo, shoeMat);
-  shoe.position.set(xOff, 0.0, 0.02);
-  shoe.rotation.x = Math.PI;
-  lianpo.add(shoe);
-});
-
-// Hair spikes (white cones on top)
+// ── Hair — black spiky cones pointing up/back ──
 const hairPositions = [
-  { x: -0.1, z: -0.05, h: 0.12, tilt: -0.3 },
-  { x: -0.02, z: -0.08, h: 0.15, tilt: -0.1 },
-  { x: 0.07, z: -0.06, h: 0.14, tilt: 0.15 },
-  { x: 0.14, z: -0.03, h: 0.1, tilt: 0.3 },
+  { x: -0.12, z: -0.06, h: 0.16, tilt: -0.35 },
+  { x: -0.04, z: -0.10, h: 0.20, tilt: -0.15 },
+  { x: 0.05, z: -0.09, h: 0.18, tilt: 0.10 },
+  { x: 0.12, z: -0.05, h: 0.14, tilt: 0.30 },
+  { x: 0.0, z: -0.04, h: 0.22, tilt: 0.0 },
 ];
+const hairMat = new THREE.MeshStandardMaterial({ color: C.hair, roughness: 0.9, metalness: 0.05 });
 hairPositions.forEach(hp => {
-  const hGeo = new THREE.ConeGeometry(0.04, hp.h, 6);
-  const hMat = new THREE.MeshStandardMaterial({ color: 0xE8E8E8, roughness: 0.8 });
-  const hMesh = new THREE.Mesh(hGeo, hMat);
-  hMesh.position.set(hp.x, 0.85, hp.z);
+  const hGeo = new THREE.ConeGeometry(0.045, hp.h, 6);
+  const hMesh = new THREE.Mesh(hGeo, hairMat);
+  hMesh.position.set(hp.x, 0.82, hp.z);
   hMesh.rotation.z = hp.tilt;
+  hMesh.rotation.x = -0.3;
+  hMesh.castShadow = true;
   lianpo.add(hMesh);
 });
 
-// Beard (small white cone under chin)
-const beardGeo = new THREE.ConeGeometry(0.06, 0.08, 6);
-const beardMat = new THREE.MeshStandardMaterial({ color: 0xD8D8D8, roughness: 0.9 });
-const beard = new THREE.Mesh(beardGeo, beardMat);
-beard.position.set(0, 0.5, 0.18);
-beard.rotation.x = 0.3;
-lianpo.add(beard);
+// ── Helmet base (dark torus around head) ──
+const helmetGeo = new THREE.TorusGeometry(0.20, 0.035, 8, 16);
+const helmet = new THREE.Mesh(helmetGeo, armorMat);
+helmet.position.y = 0.72;
+helmet.rotation.x = Math.PI / 2;
+lianpo.add(helmet);
 
-// Blush (small pink flat circles)
-[-0.16, 0.16].forEach(xOff => {
-  const blushGeo = new THREE.CircleGeometry(0.04, 8);
-  const blushMat = new THREE.MeshBasicMaterial({ color: 0xE8888A, transparent: true, opacity: 0.3, side: THREE.DoubleSide });
-  const blush = new THREE.Mesh(blushGeo, blushMat);
-  blush.position.set(xOff, 0.6, 0.24);
-  lianpo.add(blush);
+// Helmet horns — demon-horn protrusions on both sides (red)
+[-1, 1].forEach(side => {
+  const hornGeo = new THREE.ConeGeometry(0.035, 0.18, 8);
+  const horn = new THREE.Mesh(hornGeo, armorRedMat);
+  horn.position.set(side * 0.22, 0.78, -0.02);
+  horn.rotation.z = side * -0.5;
+  horn.rotation.x = -0.15;
+  horn.castShadow = true;
+  lianpo.add(horn);
+});
+
+// ── Face — fierce expression ──
+// Small fierce eyes
+[-0.07, 0.07].forEach(xOff => {
+  const eyeGeo = new THREE.SphereGeometry(0.025, 8, 8);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+  const eye = new THREE.Mesh(eyeGeo, eyeMat);
+  eye.position.set(xOff, 0.66, 0.20);
+  lianpo.add(eye);
+  // Tiny red glint
+  const glintGeo = new THREE.SphereGeometry(0.008, 6, 6);
+  const glintMat = new THREE.MeshBasicMaterial({ color: 0xFF4400 });
+  const glint = new THREE.Mesh(glintGeo, glintMat);
+  glint.position.set(xOff + 0.008, 0.668, 0.22);
+  lianpo.add(glint);
+});
+
+// Angry eyebrows — angled down sharply toward center
+[-1, 1].forEach(side => {
+  const browGeo = new THREE.BoxGeometry(0.10, 0.025, 0.03);
+  const browMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+  const brow = new THREE.Mesh(browGeo, browMat);
+  brow.position.set(side * 0.07, 0.71, 0.20);
+  brow.rotation.z = side * 0.45;
+  lianpo.add(brow);
+});
+
+// Stern mouth
+const mouthGeo = new THREE.BoxGeometry(0.08, 0.015, 0.02);
+const mouthMat = new THREE.MeshBasicMaterial({ color: 0x331111 });
+const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+mouth.position.set(0, 0.57, 0.20);
+lianpo.add(mouth);
+
+// ── Arms — exposed muscular skin + dark gauntlets ──
+// Right arm (sword side)
+const rShoulderGeo = new THREE.SphereGeometry(0.09, 10, 10);
+const rShoulder = new THREE.Mesh(rShoulderGeo, skinMat);
+rShoulder.position.set(-0.40, 0.35, 0);
+rShoulder.castShadow = true;
+lianpo.add(rShoulder);
+
+const rArmGeo = new THREE.CylinderGeometry(0.06, 0.055, 0.18, 8);
+const rArm = new THREE.Mesh(rArmGeo, skinMat);
+rArm.position.set(-0.42, 0.22, 0);
+rArm.castShadow = true;
+lianpo.add(rArm);
+
+// Right gauntlet
+const rGauntGeo = new THREE.CylinderGeometry(0.065, 0.07, 0.10, 8);
+const rGaunt = new THREE.Mesh(rGauntGeo, armorMat);
+rGaunt.position.set(-0.42, 0.12, 0);
+rGaunt.castShadow = true;
+lianpo.add(rGaunt);
+// Red trim on gauntlet
+const rGTrimGeo = new THREE.TorusGeometry(0.068, 0.012, 6, 12);
+const rGTrim = new THREE.Mesh(rGTrimGeo, armorRedMat);
+rGTrim.position.set(-0.42, 0.16, 0);
+rGTrim.rotation.x = Math.PI / 2;
+lianpo.add(rGTrim);
+
+// Left arm (shield side)
+const lShoulderGeo = new THREE.SphereGeometry(0.09, 10, 10);
+const lShoulder = new THREE.Mesh(lShoulderGeo, skinMat);
+lShoulder.position.set(0.40, 0.35, 0);
+lShoulder.castShadow = true;
+lianpo.add(lShoulder);
+
+const lArmGeo = new THREE.CylinderGeometry(0.06, 0.055, 0.18, 8);
+const lArm = new THREE.Mesh(lArmGeo, skinMat);
+lArm.position.set(0.42, 0.22, 0);
+lArm.castShadow = true;
+lianpo.add(lArm);
+
+// Left gauntlet
+const lGauntGeo = new THREE.CylinderGeometry(0.065, 0.07, 0.10, 8);
+const lGaunt = new THREE.Mesh(lGauntGeo, armorMat);
+lGaunt.position.set(0.42, 0.12, 0);
+lGaunt.castShadow = true;
+lianpo.add(lGaunt);
+const lGTrimGeo = new THREE.TorusGeometry(0.068, 0.012, 6, 12);
+const lGTrim = new THREE.Mesh(lGTrimGeo, armorRedMat);
+lGTrim.position.set(0.42, 0.16, 0);
+lGTrim.rotation.x = Math.PI / 2;
+lianpo.add(lGTrim);
+
+// ── SHIELD (RIGHT side) — massive, ornate, iconic ──
+const shieldGroup = new THREE.Group();
+shieldGroup.position.set(0.48, 0.30, 0.05);
+
+// Main shield body (big!)
+const shieldGeo = new THREE.BoxGeometry(0.10, 0.55, 0.45);
+const shieldMat = new THREE.MeshStandardMaterial({ color: C.shieldRed, metalness: 0.4, roughness: 0.6 });
+const shield = new THREE.Mesh(shieldGeo, shieldMat);
+shield.castShadow = true;
+shieldGroup.add(shield);
+
+// Gold border — top
+const sbtGeo = new THREE.BoxGeometry(0.12, 0.03, 0.47);
+const sbt = new THREE.Mesh(sbtGeo, new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 }));
+sbt.position.y = 0.27;
+shieldGroup.add(sbt);
+// Gold border — bottom
+const sbbGeo = new THREE.BoxGeometry(0.12, 0.03, 0.47);
+const sbb = new THREE.Mesh(sbbGeo, new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 }));
+sbb.position.y = -0.27;
+shieldGroup.add(sbb);
+// Gold border — left
+const sblGeo = new THREE.BoxGeometry(0.12, 0.55, 0.03);
+const sbl = new THREE.Mesh(sblGeo, new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 }));
+sbl.position.z = 0.22;
+shieldGroup.add(sbl);
+// Gold border — right
+const sbrGeo = new THREE.BoxGeometry(0.12, 0.55, 0.03);
+const sbr = new THREE.Mesh(sbrGeo, new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 }));
+sbr.position.z = -0.22;
+shieldGroup.add(sbr);
+
+// Gold cross / filigree (two crossed bars)
+const crossH = new THREE.Mesh(
+  new THREE.BoxGeometry(0.12, 0.03, 0.36),
+  new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 })
+);
+shieldGroup.add(crossH);
+const crossV = new THREE.Mesh(
+  new THREE.BoxGeometry(0.12, 0.40, 0.03),
+  new THREE.MeshStandardMaterial({ color: C.shieldGold, metalness: 0.6, roughness: 0.3 })
+);
+shieldGroup.add(crossV);
+
+// Center orb (glowing white/blue)
+const orbGeo = new THREE.SphereGeometry(0.06, 16, 16);
+const orbMat = new THREE.MeshStandardMaterial({ color: C.orbGlow, emissive: 0xFFFFCC, emissiveIntensity: 0.8, metalness: 0.1, roughness: 0.2 });
+const orb = new THREE.Mesh(orbGeo, orbMat);
+orb.position.x = 0.06;
+shieldGroup.add(orb);
+
+lianpo.add(shieldGroup);
+
+// ── SWORD (LEFT side) ──
+const swordGroup = new THREE.Group();
+swordGroup.position.set(-0.44, 0.10, 0.06);
+swordGroup.rotation.z = 0.15;
+
+// Blade
+const bladeGeo = new THREE.BoxGeometry(0.04, 0.45, 0.08);
+const bladeMat = new THREE.MeshStandardMaterial({ color: C.blade, metalness: 0.5, roughness: 0.4 });
+const blade = new THREE.Mesh(bladeGeo, bladeMat);
+blade.position.y = 0.10;
+blade.castShadow = true;
+swordGroup.add(blade);
+
+// Red edge line along blade
+const edgeGeo = new THREE.BoxGeometry(0.045, 0.45, 0.02);
+const edgeMat = new THREE.MeshStandardMaterial({ color: C.bladeEdge, emissive: C.bladeEdge, emissiveIntensity: 0.2, metalness: 0.4, roughness: 0.5 });
+const edge = new THREE.Mesh(edgeGeo, edgeMat);
+edge.position.set(0, 0.10, 0.04);
+swordGroup.add(edge);
+
+// Guard (crosspiece)
+const guardGeo = new THREE.BoxGeometry(0.03, 0.04, 0.14);
+const guard = new THREE.Mesh(guardGeo, goldMat);
+guard.position.y = -0.12;
+swordGroup.add(guard);
+
+// Handle
+const handleGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.10, 8);
+const handle = new THREE.Mesh(handleGeo, armorMat);
+handle.position.y = -0.18;
+swordGroup.add(handle);
+
+lianpo.add(swordGroup);
+
+// ── Legs ──
+[-0.12, 0.12].forEach(xOff => {
+  const legGeo = new THREE.CylinderGeometry(0.08, 0.09, 0.14, 8);
+  const leg = new THREE.Mesh(legGeo, armorMat);
+  leg.position.set(xOff, 0.07, 0);
+  leg.castShadow = true;
+  lianpo.add(leg);
+  // Red accent on leg
+  const accentGeo = new THREE.BoxGeometry(0.04, 0.08, 0.02);
+  const accent = new THREE.Mesh(accentGeo, armorRedMat);
+  accent.position.set(xOff, 0.07, 0.08);
+  lianpo.add(accent);
+  // Boot sole
+  const bootGeo = new THREE.CylinderGeometry(0.09, 0.10, 0.04, 8);
+  const boot = new THREE.Mesh(bootGeo, armorMat);
+  boot.position.set(xOff, 0.0, 0);
+  boot.castShadow = true;
+  lianpo.add(boot);
 });
 
 scene.add(lianpo);
