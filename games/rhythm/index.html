@@ -7,6 +7,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action:none;user-select:none;-webkit-user-select:none;font-family:'PingFang SC','Microsoft YaHei',sans-serif}
+:root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
 #game{width:100%;height:100%;position:fixed;inset:0}
 </style>
 </head>
@@ -291,6 +292,12 @@ const SONGS = [generateSong1(), generateSong2(), generateSong3()];
 const screen = createCanvas(document.getElementById('game'));
 const { canvas, ctx } = screen;
 let W = screen.width, H = screen.height;
+let safeTop = 0, safeBottom = 0;
+function updateSafeAreas() {
+  safeTop = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat')) || 0;
+  safeBottom = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sab')) || 0;
+}
+updateSafeAreas();
 const particles = createParticleSystem(500);
 const floatText = createFloatingText();
 let audio = null;
@@ -833,7 +840,7 @@ function processAutoMiss(dt) {
 
 function handleTitleTap(x, y) {
   // Back button
-  if (x < 100 && y < 60) {
+  if (x < W * 0.25 && y < H * 0.08) {
     window.location.href = '../../index.html';
     return;
   }
@@ -944,7 +951,7 @@ function showResults() {
 function handleResultsTap(x, y) {
   const btnW = W * 0.35;
   const btnH = H * 0.06;
-  const gap = 20;
+  const gap = W * 0.05;
   const baseY = H * 0.78;
 
   // Retry button
@@ -963,7 +970,7 @@ function handleResultsTap(x, y) {
 
   // Lobby button
   const lobbyY = baseY + btnH + H * 0.02;
-  if (y >= lobbyY && y <= lobbyY + H * 0.05 && x >= W / 2 - 80 && x <= W / 2 + 80) {
+  if (y >= lobbyY && y <= lobbyY + H * 0.05 && x >= W * 0.2 && x <= W * 0.8) {
     window.location.href = '../../index.html';
     return;
   }
@@ -976,6 +983,7 @@ function handleResultsTap(x, y) {
 function update(dt) {
   W = screen.width;
   H = screen.height;
+  updateSafeAreas();
 
   particles.update(dt);
   floatText.update(dt);
@@ -1111,11 +1119,11 @@ function renderTitle() {
 
   // Back button
   ctx.save();
-  ctx.font = 'bold 16px sans-serif';
+  ctx.font = `bold ${Math.max(14, W * 0.04)}px sans-serif`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#D4A84B';
-  ctx.fillText('\u2190 \u8FD4\u56DE', 20, 40);
+  ctx.fillText('\u2190 \u8FD4\u56DE', W * 0.05, safeTop + H * 0.04);
   ctx.restore();
 
   // Avatar
@@ -1182,24 +1190,24 @@ function renderTitle() {
     ctx.fillStyle = isSelected ? '#D4A84B' : '#ccc';
     ctx.font = `bold ${W * 0.045}px sans-serif`;
     ctx.textAlign = 'left';
-    ctx.fillText(song.name, btnX + 16, btnY + btnHeight * 0.42);
+    ctx.fillText(song.name, btnX + btnWidth * 0.08, btnY + btnHeight * 0.42);
 
     // Difficulty label
     ctx.fillStyle = isSelected ? '#fff' : '#999';
     ctx.font = `${W * 0.03}px sans-serif`;
-    ctx.fillText(song.diffLabel, btnX + 16, btnY + btnHeight * 0.75);
+    ctx.fillText(song.diffLabel, btnX + btnWidth * 0.08, btnY + btnHeight * 0.75);
 
     // Difficulty stars
     ctx.fillStyle = '#FFD700';
     ctx.font = `${W * 0.035}px sans-serif`;
     ctx.textAlign = 'right';
     const stars = '\u2605'.repeat(song.difficulty) + '\u2606'.repeat(3 - song.difficulty);
-    ctx.fillText(stars, btnX + btnWidth - 16, btnY + btnHeight * 0.55);
+    ctx.fillText(stars, btnX + btnWidth - btnWidth * 0.08, btnY + btnHeight * 0.55);
 
     // Note count and BPM info
     ctx.fillStyle = '#888';
     ctx.font = `${W * 0.025}px sans-serif`;
-    ctx.fillText(`${song.notes.length}音符 · BPM ${song.bpm}`, btnX + btnWidth - 16, btnY + btnHeight * 0.8);
+    ctx.fillText(`${song.notes.length}音符 · BPM ${song.bpm}`, btnX + btnWidth - btnWidth * 0.08, btnY + btnHeight * 0.8);
   }
 
   // Start button
@@ -1493,7 +1501,7 @@ function renderHUD() {
   ctx.font = `bold ${W * 0.05}px sans-serif`;
   ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
-  ctx.fillText(formatScore(score), W - 12, 10);
+  ctx.fillText(formatScore(score), W - W * 0.03, safeTop + H * 0.015);
   ctx.restore();
 
   // Combo (top center)
@@ -1530,10 +1538,11 @@ function renderHUD() {
   if (currentSong) {
     const progress = Math.max(0, Math.min(1, songTime / currentSong.duration));
     ctx.save();
+    const barH = Math.max(2, H * 0.004);
     ctx.fillStyle = 'rgba(255,255,255,0.1)';
-    ctx.fillRect(0, 0, W, 3);
+    ctx.fillRect(0, 0, W, barH);
     ctx.fillStyle = '#D4A84B';
-    ctx.fillRect(0, 0, W * progress, 3);
+    ctx.fillRect(0, 0, W * progress, barH);
     ctx.restore();
   }
 
@@ -1564,7 +1573,7 @@ function renderHUD() {
     ctx.font = `${W * 0.03}px sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(currentSong.name, 10, 8);
+    ctx.fillText(currentSong.name, W * 0.025, safeTop + H * 0.01);
     ctx.restore();
   }
 }
@@ -1744,7 +1753,7 @@ function renderResults() {
   // Buttons
   const btnW = W * 0.35;
   const btnH = H * 0.06;
-  const gap = 20;
+  const gap = W * 0.05;
   const btnY = H * 0.78;
 
   // Retry

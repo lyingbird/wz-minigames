@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
 <title>兰陵王·暗影刺客</title>
 <style>
+:root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action:none;user-select:none;-webkit-user-select:none;font-family:'PingFang SC','Microsoft YaHei',sans-serif}
 #game{width:100%;height:100%;position:fixed;inset:0}
@@ -24,7 +25,7 @@ import{getCurrentSeason}from'../../shared/season.js';
 // ══════════════════════════════════════════════════════════════════════════════
 const GAME_ID='slash';
 const LLW=GAME_HEROES.LANLINGWANG; // 153
-const TARGET_RADIUS=28;
+let TARGET_RADIUS=28;
 const GRAVITY=420;
 const TRAIL_FADE=300;
 const ENERGY_MAX=500;
@@ -44,6 +45,10 @@ const S_LOADING=0,S_TITLE=1,S_COUNTDOWN=2,S_PLAYING=3,S_GAMEOVER=4,S_PAUSED=5;
 const screen=createCanvas(document.getElementById('game'));
 const{canvas,ctx}=screen;
 let W=screen.width,H=screen.height;
+let S=Math.min(Math.min(W,H)/390,1.5);
+const safeTop=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat'))||0;
+const safeBottom=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sab'))||0;
+TARGET_RADIUS=Math.round(28*S);
 const particles=createParticleSystem(400);
 const floatText=createFloatingText();
 let audio=null;
@@ -178,19 +183,20 @@ function setupMouseSwipe(){
 // TARGET CREATION
 // ══════════════════════════════════════════════════════════════════════════════
 function createTarget(type){
-  const x=40+Math.random()*(W-80);
-  const baseVY=-(350+Math.random()*200);
-  const vx=(Math.random()-0.5)*120;
+  const margin=Math.round(W*0.1);
+  const x=margin+Math.random()*(W-margin*2);
+  const baseVY=-(H*0.42+Math.random()*H*0.24);
+  const vx=(Math.random()-0.5)*Math.round(120*S);
   let r=TARGET_RADIUS;
   let points=30;
   let ename=heroPool[Math.floor(Math.random()*heroPool.length)];
 
-  if(type===T_ENEMY_COMMON){r=22;points=10;}
+  if(type===T_ENEMY_COMMON){r=Math.round(22*S);points=10;}
   else if(type===T_ENEMY_REGULAR){points=30;}
-  else if(type===T_ENEMY_RARE){points=50;r=32;}
+  else if(type===T_ENEMY_RARE){points=50;r=Math.round(32*S);}
   else if(type===T_ALLY){ename=LLW;points=-100;}
-  else if(type===T_BUFF_BLUE||type===T_BUFF_RED||type===T_BUFF_GREEN){ename=0;r=24;points=0;}
-  else if(type===T_BOMB){ename=0;r=26;points=0;}
+  else if(type===T_BUFF_BLUE||type===T_BUFF_RED||type===T_BUFF_GREEN){ename=0;r=Math.round(24*S);points=0;}
+  else if(type===T_BOMB){ename=0;r=Math.round(26*S);points=0;}
 
   return{
     x,y:H+r+10,
@@ -283,8 +289,8 @@ function handleSwipe(pts,velocity){
       score=Math.max(0,score+t.points);
       screenShake=0.3;
       if(audio)audio.playDeath();
-      floatText.add(t.x,t.y,'-100',{color:COLORS.RED,size:28,duration:1.2});
-      particles.emit(t.x,t.y,{count:20,speed:180,color:COLORS.BLUE,size:5,gravity:200});
+      floatText.add(t.x,t.y,'-100',{color:COLORS.RED,size:Math.round(28*S),duration:1.2});
+      particles.emit(t.x,t.y,{count:20,speed:Math.round(180*S),color:COLORS.BLUE,size:Math.round(5*S),gravity:200});
       createSplitHalves(t,pts);
     }else if(t.type===T_BOMB){
       hitBomb=true;
@@ -296,21 +302,21 @@ function handleSwipe(pts,velocity){
       // Explosion effect
       particles.emit(t.x,t.y,{count:30,speed:250,color:COLORS.RED,size:6,gravity:100});
       particles.emit(t.x,t.y,{count:15,speed:150,color:'#FF8800',size:4,gravity:100});
-      floatText.add(t.x,t.y,'BOOM!',{color:COLORS.RED,size:32,duration:1});
+      floatText.add(t.x,t.y,'BOOM!',{color:COLORS.RED,size:Math.round(32*S),duration:1});
     }else if(t.type===T_BUFF_BLUE){
       freezeTimer=FREEZE_DURATION;
       if(audio)audio.playScore();
-      floatText.add(t.x,t.y,'冰冻!',{color:'#00CCFF',size:26,duration:1.2});
+      floatText.add(t.x,t.y,'冰冻!',{color:'#00CCFF',size:Math.round(26*S),duration:1.2});
       particles.emit(t.x,t.y,{count:20,speed:120,color:'#00CCFF',size:4,gravity:50});
     }else if(t.type===T_BUFF_RED){
       doubleTimer=DOUBLE_DURATION;
       if(audio)audio.playScore();
-      floatText.add(t.x,t.y,'双倍!',{color:COLORS.RED,size:26,duration:1.2});
+      floatText.add(t.x,t.y,'双倍!',{color:COLORS.RED,size:Math.round(26*S),duration:1.2});
       particles.emit(t.x,t.y,{count:20,speed:120,color:COLORS.RED,size:4,gravity:50});
     }else if(t.type===T_BUFF_GREEN){
       lives=Math.min(lives+1,5);
       if(audio)audio.playScore();
-      floatText.add(t.x,t.y,'+1 ❤',{color:'#44FF44',size:26,duration:1.2});
+      floatText.add(t.x,t.y,'+1 ❤',{color:'#44FF44',size:Math.round(26*S),duration:1.2});
       particles.emit(t.x,t.y,{count:15,speed:100,color:'#44FF44',size:4,gravity:50});
     }else{
       // Enemy hit
@@ -322,7 +328,7 @@ function handleSwipe(pts,velocity){
 
       const color=t.type===T_ENEMY_RARE?COLORS.GOLD:COLORS.WHITE;
       particles.emit(t.x,t.y,{count:12,speed:150,color,size:4,gravity:200});
-      floatText.add(t.x,t.y,`+${pts_val}`,{color:doubleTimer>0?COLORS.RED:COLORS.GOLD,size:22,duration:0.8});
+      floatText.add(t.x,t.y,`+${pts_val}`,{color:doubleTimer>0?COLORS.RED:COLORS.GOLD,size:Math.round(22*S),duration:0.8});
       createSplitHalves(t,pts);
     }
   }
@@ -339,7 +345,7 @@ function handleSwipe(pts,velocity){
       const multiplier=hitCount;
       totalScore=Math.floor(totalScore*multiplier);
       if(audio)audio.playCombo(hitCount);
-      floatText.add(W/2,H*0.35,`${hitCount}x 连斩!`,{color:COLORS.GOLD,size:36,duration:1.5});
+      floatText.add(W/2,H*0.35,`${hitCount}x 连斩!`,{color:COLORS.GOLD,size:Math.round(36*S),duration:1.5});
     }else if(audio&&hitCount===1){
       audio.playHit();
     }
@@ -386,7 +392,7 @@ function createSplitHalves(target,swipePts){
 // ══════════════════════════════════════════════════════════════════════════════
 function handleTap(x,y){
   if(state===S_TITLE){
-    if(x<100&&y<60){
+    if(x<W*0.25&&y<H*0.08){
       window.location.href='../../index.html';
       return;
     }
@@ -452,7 +458,7 @@ function activateUltimate(){
   }
   score+=ultScore;
   if(ultScore>0){
-    floatText.add(W/2,H*0.25,`暗影突袭! +${ultScore}`,{color:COLORS.GOLD,size:34,duration:2});
+    floatText.add(W/2,H*0.25,`暗影突袭! +${ultScore}`,{color:COLORS.GOLD,size:Math.round(34*S),duration:2});
   }
 }
 
@@ -491,6 +497,7 @@ function endGame(){
 // ══════════════════════════════════════════════════════════════════════════════
 function update(dt){
   W=screen.width;H=screen.height;
+  S=Math.min(Math.min(W,H)/390,1.5);
   titlePulse+=dt;
 
   // Background particles always update
@@ -645,16 +652,16 @@ function renderTitle(){
 
   // Back button
   ctx.save();
-  ctx.font='bold 16px sans-serif';
+  ctx.font=`bold ${Math.round(16*S)}px sans-serif`;
   ctx.textAlign='left';
   ctx.textBaseline='middle';
   ctx.fillStyle=COLORS.GOLD;
-  ctx.fillText('\u2190 \u8FD4\u56DE',20,40);
+  ctx.fillText('\u2190 \u8FD4\u56DE',Math.round(20*S),safeTop+Math.round(40*S));
   ctx.restore();
 
   // Lan Ling Wang avatar
   const avatar=getAvatarImage(LLW);
-  const avatarSize=90;
+  const avatarSize=Math.round(90*S);
   const ay=H*0.22;
   if(avatar){
     ctx.save();
@@ -679,18 +686,18 @@ function renderTitle(){
   // Title
   ctx.save();
   ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.font='bold 32px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.font=`bold ${Math.round(32*S)}px "PingFang SC","Microsoft YaHei",sans-serif`;
   ctx.shadowColor=COLORS.GOLD;ctx.shadowBlur=20;
   ctx.fillStyle=COLORS.GOLD;
   ctx.fillText('兰陵王',cx,H*0.35);
-  ctx.font='bold 22px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.font=`bold ${Math.round(22*S)}px "PingFang SC","Microsoft YaHei",sans-serif`;
   ctx.fillText('暗影刺客',cx,H*0.40);
   ctx.restore();
 
   // Season info
   ctx.save();
   ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.font='14px sans-serif';
+  ctx.font=`${Math.round(14*S)}px sans-serif`;
   ctx.fillStyle='rgba(212,168,75,0.6)';
   ctx.fillText(`赛季: ${season.name}`,cx,H*0.46);
   ctx.restore();
@@ -699,14 +706,14 @@ function renderTitle(){
   if(personalBest){
     ctx.save();
     ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.font='16px sans-serif';
+    ctx.font=`${Math.round(16*S)}px sans-serif`;
     ctx.fillStyle=COLORS.LIGHT_GOLD;
     ctx.fillText(`最高分: ${formatScore(personalBest.score)}`,cx,H*0.52);
     ctx.restore();
   }
 
   // Mode buttons
-  const btnW=180,btnH=50,btnGap=20;
+  const btnW=Math.round(180*S),btnH=Math.round(50*S),btnGap=Math.round(20*S);
   const btnY1=H*0.60;
   const btnY2=btnY1+btnH+btnGap;
 
@@ -719,7 +726,7 @@ function renderTitle(){
   // Instructions
   ctx.save();
   ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.font='13px sans-serif';
+  ctx.font=`${Math.round(13*S)}px sans-serif`;
   ctx.fillStyle='rgba(255,255,255,0.4)';
   ctx.fillText('滑动屏幕斩杀敌方英雄',cx,H*0.88);
   ctx.fillText('避开己方英雄和炸弹',cx,H*0.92);
@@ -737,13 +744,13 @@ function drawButton(btn,text,sub,color){
   ctx.stroke();
   ctx.shadowBlur=0;
   ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.font='bold 18px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.font=`bold ${Math.round(18*S)}px "PingFang SC","Microsoft YaHei",sans-serif`;
   ctx.fillStyle=color;
-  ctx.fillText(text,btn.x+btn.w/2,btn.y+btn.h/2-(sub?8:0));
+  ctx.fillText(text,btn.x+btn.w/2,btn.y+btn.h/2-(sub?Math.round(8*S):0));
   if(sub){
-    ctx.font='12px sans-serif';
+    ctx.font=`${Math.round(12*S)}px sans-serif`;
     ctx.fillStyle='rgba(255,255,255,0.5)';
-    ctx.fillText(sub,btn.x+btn.w/2,btn.y+btn.h/2+14);
+    ctx.fillText(sub,btn.x+btn.w/2,btn.y+btn.h/2+Math.round(14*S));
   }
   ctx.restore();
 }
@@ -758,7 +765,7 @@ function renderCountdown(){
   ctx.save();
   ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.globalAlpha=Math.max(0,alpha);
-  ctx.font=`bold ${Math.round(80*scale)}px sans-serif`;
+  ctx.font=`bold ${Math.round(80*S*scale)}px sans-serif`;
   ctx.shadowColor=COLORS.GOLD;ctx.shadowBlur=30;
   ctx.fillStyle=COLORS.GOLD;
   ctx.fillText(countdownVal>0?String(countdownVal):'GO!',cx,cy);
@@ -870,7 +877,7 @@ function renderTarget(t){
     ctx.strokeStyle='#FF2200';ctx.lineWidth=2;ctx.stroke();
     ctx.shadowBlur=0;
     // Lightning symbol
-    ctx.font=`bold ${t.r}px sans-serif`;
+    ctx.font=`bold ${Math.round(t.r)}px sans-serif`;
     ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.fillStyle='#FFF';
     ctx.fillText('⚡',0,0);
@@ -1032,7 +1039,7 @@ function renderComboDisplay(){
   ctx.globalAlpha=Math.max(0,alpha);
   ctx.textAlign='center';ctx.textBaseline='middle';
 
-  const size=Math.round(40*scale);
+  const size=Math.round(40*S*scale);
   ctx.font=`bold ${size}px "PingFang SC","Microsoft YaHei",sans-serif`;
 
   // Color based on combo level
@@ -1051,46 +1058,46 @@ function renderComboDisplay(){
 
 function renderHUD(){
   ctx.save();
-  const pad=12;
-  const topY=Math.max(pad,parseInt(getComputedStyle(document.documentElement).getPropertyValue('env(safe-area-inset-top)'))||0)+pad;
+  const pad=Math.round(12*S);
+  const topY=safeTop+pad;
 
   // Score (top left)
   ctx.textAlign='left';ctx.textBaseline='top';
-  ctx.font='bold 24px sans-serif';
+  ctx.font=`bold ${Math.round(24*S)}px sans-serif`;
   ctx.shadowColor=COLORS.GOLD;ctx.shadowBlur=5;
   ctx.fillStyle=COLORS.GOLD;
   ctx.fillText(formatScore(score),pad,topY);
 
   // Timer or mode label (top center)
   ctx.textAlign='center';
-  ctx.font='16px sans-serif';
+  ctx.font=`${Math.round(16*S)}px sans-serif`;
   ctx.fillStyle=COLORS.WHITE;
   ctx.shadowBlur=0;
   if(mode==='classic'){
     const remain=Math.max(0,Math.ceil(totalTime-gameTime));
     const urgentColor=remain<=10?COLORS.RED:COLORS.WHITE;
     ctx.fillStyle=urgentColor;
-    ctx.fillText(`${remain}s`,W/2,topY+4);
+    ctx.fillText(`${remain}s`,W/2,topY+Math.round(4*S));
   }else{
-    ctx.fillText('生存',W/2,topY+4);
+    ctx.fillText('生存',W/2,topY+Math.round(4*S));
   }
 
   // Lives (top right) - hearts
   ctx.textAlign='right';
-  const heartSize=18;
+  const heartSize=Math.round(18*S);
   for(let i=0;i<Math.max(lives,0);i++){
-    const hx=W-pad-(lives-1-i)*(heartSize+4);
+    const hx=W-pad-(lives-1-i)*(heartSize+Math.round(4*S));
     const hy=topY+heartSize/2+2;
     drawHeart(ctx,hx,hy,heartSize/2,COLORS.RED);
   }
 
   // Buff indicators
-  let buffY=topY+34;
-  ctx.textAlign='left';ctx.font='bold 13px sans-serif';
+  let buffY=topY+Math.round(34*S);
+  ctx.textAlign='left';ctx.font=`bold ${Math.round(13*S)}px sans-serif`;
   if(freezeTimer>0){
     ctx.fillStyle='#00CCFF';
     ctx.fillText(`❄ 冰冻 ${freezeTimer.toFixed(1)}s`,pad,buffY);
-    buffY+=18;
+    buffY+=Math.round(18*S);
   }
   if(doubleTimer>0){
     ctx.fillStyle=COLORS.RED;
@@ -1098,8 +1105,8 @@ function renderHUD(){
   }
 
   // Energy bar (bottom)
-  const barW=W*0.6,barH=18;
-  const barX=(W-barW)/2,barY=H-40;
+  const barW=W*0.6,barH=Math.round(18*S);
+  const barX=(W-barW)/2,barY=H-safeBottom-Math.round(40*S);
   btnEnergy={x:barX-10,y:barY-10,w:barW+20,h:barH+20};
 
   // Bar background
@@ -1125,7 +1132,7 @@ function renderHUD(){
 
   // Energy label
   ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.font='bold 11px sans-serif';
+  ctx.font=`bold ${Math.round(11*S)}px sans-serif`;
   ctx.fillStyle=energy>=ENERGY_MAX?'#FFF':COLORS.LIGHT_GOLD;
   ctx.fillText(energy>=ENERGY_MAX?'点击释放 暗影突袭!':'暗影突袭',W/2,barY+barH/2);
 
@@ -1160,60 +1167,60 @@ function renderGameOver(){
 
   // Title
   ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.font='bold 28px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.font=`bold ${Math.round(28*S)}px "PingFang SC","Microsoft YaHei",sans-serif`;
   ctx.shadowColor=COLORS.GOLD;ctx.shadowBlur=15;
   ctx.fillStyle=COLORS.GOLD;
   ctx.fillText('游戏结束',cx,y);
   ctx.shadowBlur=0;
 
-  y+=50;
+  y+=Math.round(50*S);
 
   // Score
-  ctx.font='bold 42px sans-serif';
+  ctx.font=`bold ${Math.round(42*S)}px sans-serif`;
   ctx.fillStyle=COLORS.GOLD;
   ctx.fillText(formatScore(score),cx,y);
 
-  y+=35;
-  ctx.font='16px sans-serif';
+  y+=Math.round(35*S);
+  ctx.font=`${Math.round(16*S)}px sans-serif`;
   ctx.fillStyle='rgba(255,255,255,0.6)';
   ctx.fillText(`最大连击: ${maxCombo}`,cx,y);
 
-  y+=25;
+  y+=Math.round(25*S);
   ctx.fillText(`模式: ${mode==='classic'?'经典':'生存'}`,cx,y);
 
   // High score check
-  y+=35;
+  y+=Math.round(35*S);
   if(personalBest&&score>=personalBest.score){
-    ctx.font='bold 18px sans-serif';
+    ctx.font=`bold ${Math.round(18*S)}px sans-serif`;
     ctx.fillStyle='#FFD700';
     ctx.fillText('新纪录!',cx,y);
-    y+=30;
+    y+=Math.round(30*S);
   }else{
-    y+=10;
+    y+=Math.round(10*S);
   }
 
   // Leaderboard
   const lb=getLeaderboard(GAME_ID);
   if(lb.length>0){
-    ctx.font='bold 16px sans-serif';
+    ctx.font=`bold ${Math.round(16*S)}px sans-serif`;
     ctx.fillStyle=COLORS.LIGHT_GOLD;
     ctx.fillText('排行榜 TOP 5',cx,y);
-    y+=28;
+    y+=Math.round(28*S);
 
-    ctx.font='14px sans-serif';
+    ctx.font=`${Math.round(14*S)}px sans-serif`;
     const top5=lb.slice(0,5);
     for(let i=0;i<top5.length;i++){
       const e=top5[i];
       const isMe=e.score===score&&i===top5.findIndex(x=>x.score===score);
       ctx.fillStyle=isMe?COLORS.GOLD:'rgba(255,255,255,0.7)';
       ctx.fillText(`#${e.rank}  ${formatScore(e.score)}`,cx,y);
-      y+=22;
+      y+=Math.round(22*S);
     }
   }
 
   // Replay button
-  y=Math.max(y+20,H*0.78);
-  const bw=160,bh=48;
+  y=Math.max(y+Math.round(20*S),H*0.78);
+  const bw=Math.round(160*S),bh=Math.round(48*S);
   btnReplay={x:cx-bw/2,y:y,w:bw,h:bh};
 
   ctx.save();
@@ -1222,15 +1229,15 @@ function renderGameOver(){
   ctx.fillStyle='rgba(212,168,75,0.15)';ctx.fill();
   ctx.strokeStyle=COLORS.GOLD;ctx.lineWidth=2;ctx.stroke();
   ctx.shadowBlur=0;
-  ctx.font='bold 20px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.font=`bold ${Math.round(20*S)}px "PingFang SC","Microsoft YaHei",sans-serif`;
   ctx.fillStyle=COLORS.GOLD;
   ctx.fillText('再来一局',cx,y+bh/2);
   ctx.restore();
 
   // Lobby button
-  const lobbyY=y+bh+16;
+  const lobbyY=y+bh+Math.round(16*S);
   btnLobby={x:cx-bw/2,y:lobbyY,w:bw,h:bh};
-  ctx.font='bold 14px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.font=`bold ${Math.round(14*S)}px "PingFang SC","Microsoft YaHei",sans-serif`;
   ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.fillStyle='rgba(212,168,75,0.7)';
   ctx.fillText('\u8FD4\u56DE\u5927\u5385',cx,lobbyY+bh/2);
@@ -1250,7 +1257,7 @@ init().catch(err=>{
   console.error('Game init failed:',err);
   // Show error fallback
   ctx.fillStyle='#FFF';
-  ctx.font='16px sans-serif';
+  ctx.font=`${Math.round(16*S)}px sans-serif`;
   ctx.textAlign='center';
   ctx.fillText('加载失败，请刷新重试',W/2,H/2);
 });

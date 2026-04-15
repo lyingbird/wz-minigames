@@ -7,6 +7,7 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action:none;user-select:none;-webkit-user-select:none}
+:root{--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
 #game{width:100%;height:100%;position:fixed;inset:0}
 </style>
 </head>
@@ -20,21 +21,32 @@ import{addScore,getLeaderboard,getPersonalBest}from'../../shared/leaderboard.js'
 import{getCurrentSeason}from'../../shared/season.js';
 
 const GAME_ID='dodge';
-const PLAYER_RADIUS=18;
-const PLAYER_SPEED=280;
-const DASH_DISTANCE=120;
-const DASH_DURATION=0.3;
-const DASH_COOLDOWN=4;
-const GRAZE_RADIUS=PLAYER_RADIUS*1.5;
-const FATE_INTERVAL=12;
-const FATE_DURATION=3;
-const FATE_RADIUS=55;
-const MARGIN=15;
 
 // ── State ──
 const State={LOADING:0,TITLE:1,COUNTDOWN:2,PLAYING:3,DYING:4,GAMEOVER:5};
 let state=State.LOADING;
 let screen,ctx,W,H;
+let S=1; // global scale factor
+let safeTop=0,safeBottom=0;
+
+// Scaled constants (set after canvas init)
+let PLAYER_RADIUS,PLAYER_SPEED,DASH_DISTANCE,GRAZE_RADIUS,FATE_RADIUS,MARGIN;
+const DASH_DURATION=0.3;
+const DASH_COOLDOWN=4;
+const FATE_INTERVAL=12;
+const FATE_DURATION=3;
+
+function updateScale(){
+  S=Math.min(Math.min(W,H)/390,1.5);
+  safeTop=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat'))||0;
+  safeBottom=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sab'))||0;
+  PLAYER_RADIUS=Math.round(18*S);
+  PLAYER_SPEED=Math.round(280*S);
+  DASH_DISTANCE=Math.round(120*S);
+  GRAZE_RADIUS=PLAYER_RADIUS*1.5;
+  FATE_RADIUS=Math.round(55*S);
+  MARGIN=Math.round(15*S);
+}
 let audio=null;
 let joystick,tapDetector;
 let particles,floatingText;
@@ -58,7 +70,7 @@ let fateTimer=0,fateActive=false,fateX=0,fateY=0,fateDuration=0,fateCollected=fa
 
 // Bullet pool
 const bulletPool=createPool(
-  ()=>({x:0,y:0,vx:0,vy:0,radius:7,type:0,active:false,age:0,trail:[],homingAngle:0}),
+  ()=>({x:0,y:0,vx:0,vy:0,radius:7,type:0,active:false,age:0,trail:[],homingAngle:0,_grazed:false}),
   (b)=>{b.active=false;b.age=0;b.trail.length=0;b.type=0;b.homingAngle=0;b._grazed=false;},
   300
 );
@@ -77,23 +89,24 @@ let fanTimer=0,homingTimer=0,laserTimer=0,spiralTimer=0;
 async function init(){
   screen=createCanvas(document.getElementById('game'));
   ({ctx,width:W,height:H}=screen);
+  updateScale();
 
   // Watch for resize
-  const ro=new ResizeObserver(()=>{W=screen.width;H=screen.height;});
+  const ro=new ResizeObserver(()=>{W=screen.width;H=screen.height;updateScale();});
   ro.observe(screen.canvas);
 
-  joystick=createJoystick({side:'left',radius:55,deadzone:8});
+  joystick=createJoystick({side:'left',radius:Math.round(55*S),deadzone:Math.round(8*S)});
   joystick.attach(screen.canvas);
 
   tapDetector=createTapDetector(screen.canvas);
   tapDetector.onTap=(x,y)=>{
     W=screen.width;H=screen.height;
     if(state===State.TITLE){
-      if(x<100&&y<60){window.location.href='../../index.html';return;}
+      if(x<W*0.25&&y<H*0.08){window.location.href='../../index.html';return;}
       startGame();
     }else if(state===State.GAMEOVER){
       // Check lobby button at bottom of screen (rendered at H*0.93)
-      if(y>=H*0.90&&y<=H*0.97&&x>=W/2-80&&x<=W/2+80){
+      if(y>=H*0.90&&y<=H*0.97&&x>=W*0.2&&x<=W*0.8){
         window.location.href='../../index.html';return;
       }
       startGame();
@@ -169,9 +182,9 @@ function triggerDash(){
 // ── Bullet spawning ──
 function spawnLinear(){
   const b=bulletPool.get();
-  b.active=true;b.type=0;b.radius=6+Math.random()*2;
+  b.active=true;b.type=0;b.radius=(6+Math.random()*2)*S;
   const side=Math.floor(Math.random()*4);
-  const speed=120+gameTime*1.2+Math.random()*60;
+  const speed=(120+gameTime*1.2+Math.random()*60)*S;
   if(side===0){b.x=Math.random()*W;b.y=-10;}
   else if(side===1){b.x=Math.random()*W;b.y=H+10;}
   else if(side===2){b.x=-10;b.y=Math.random()*H;}
@@ -193,10 +206,10 @@ function spawnFan(){
   else{ox=W+5;oy=Math.random()*H;baseAngle=Math.PI;}
   const count=5+Math.floor(Math.random()*3);
   const spread=0.8;
-  const speed=140+gameTime*0.8;
+  const speed=(140+gameTime*0.8)*S;
   for(let i=0;i<count;i++){
     const b=bulletPool.get();
-    b.active=true;b.type=1;b.radius=6;
+    b.active=true;b.type=1;b.radius=Math.round(6*S);
     b.x=ox;b.y=oy;
     const a=baseAngle-spread/2+spread*i/(count-1);
     b.vx=Math.cos(a)*speed;
@@ -206,14 +219,14 @@ function spawnFan(){
 
 function spawnHoming(){
   const b=bulletPool.get();
-  b.active=true;b.type=2;b.radius=7;
+  b.active=true;b.type=2;b.radius=Math.round(7*S);
   const side=Math.floor(Math.random()*4);
   if(side===0){b.x=Math.random()*W;b.y=-10;}
   else if(side===1){b.x=Math.random()*W;b.y=H+10;}
   else if(side===2){b.x=-10;b.y=Math.random()*H;}
   else{b.x=W+10;b.y=Math.random()*H;}
   const ang=Math.atan2(py-b.y,px-b.x);
-  const speed=80+gameTime*0.5;
+  const speed=(80+gameTime*0.5)*S;
   b.vx=Math.cos(ang)*speed;
   b.vy=Math.sin(ang)*speed;
   b.homingAngle=ang;
@@ -229,13 +242,13 @@ function spawnLaser(){
     const xx=50+Math.random()*(W-100);
     x1=xx;y1=0;x2=xx;y2=H;
   }
-  lasers.push({x1,y1,x2,y2,warningTime:1.0,fireTime:0,firing:false,width:0,maxWidth:30,age:0,done:false});
+  lasers.push({x1,y1,x2,y2,warningTime:1.0,fireTime:0,firing:false,width:0,maxWidth:Math.round(30*S),age:0,done:false});
 }
 
 function spawnSpiral(){
   const cx=80+Math.random()*(W-160);
   const cy=80+Math.random()*(H-160);
-  spirals.push({cx,cy,angle:0,timer:0,interval:0.12,duration:3+Math.random()*2,elapsed:0,speed:130+gameTime*0.6});
+  spirals.push({cx,cy,angle:0,timer:0,interval:0.12,duration:3+Math.random()*2,elapsed:0,speed:(130+gameTime*0.6)*S});
 }
 
 // ── Update ──
@@ -342,7 +355,7 @@ function update(dt){
       invincible=true;
       invTimer=Math.max(invTimer,1.0);
       score+=200;
-      floatingText.add(fateX,fateY-20,'+200',{color:'#FFD700',size:28,duration:1.2});
+      floatingText.add(fateX,fateY-20,'+200',{color:'#FFD700',size:Math.round(28*S),duration:1.2});
       particles.emit(fateX,fateY,{count:20,speed:120,color:'#FFD700',size:5,life:0.8});
       if(audio)audio.playScore();
     }
@@ -394,7 +407,7 @@ function update(dt){
     if(s.timer>=s.interval){
       s.timer-=s.interval;
       const b=bulletPool.get();
-      b.active=true;b.type=4;b.radius=5;
+      b.active=true;b.type=4;b.radius=Math.round(5*S);
       b.x=s.cx;b.y=s.cy;
       b.vx=Math.cos(s.angle)*s.speed;
       b.vy=Math.sin(s.angle)*s.speed;
@@ -469,7 +482,7 @@ function update(dt){
       grazeComboTimer=1.5;
       const bonus=50+Math.min(grazeCombo-1,10)*25;
       score+=bonus;
-      floatingText.add(px,py-PLAYER_RADIUS-15,`+${bonus}`,{color:'#fff',size:18,duration:0.7});
+      floatingText.add(px,py-PLAYER_RADIUS-15,`+${bonus}`,{color:'#fff',size:Math.round(18*S),duration:0.7});
       screenFlash=0.3;
       edgeFlash=0.5;
       if(audio)audio.playScore();
@@ -813,7 +826,7 @@ function drawFateCircle(){
 
   // Label
   ctx.globalAlpha=0.6;
-  ctx.font='bold 12px sans-serif';
+  ctx.font=`bold ${Math.round(12*S)}px sans-serif`;
   ctx.textAlign='center';
   ctx.textBaseline='middle';
   ctx.fillStyle='#FFD700';
@@ -825,36 +838,39 @@ function drawHUD(){
   ctx.save();
   ctx.textBaseline='top';
 
+  const hudPad=Math.round(12*S);
+  const hudTop=safeTop+hudPad;
   // Score (left)
   ctx.textAlign='left';
-  ctx.font='bold 16px sans-serif';
+  ctx.font=`bold ${Math.round(16*S)}px sans-serif`;
   ctx.fillStyle=COLORS.GOLD;
-  ctx.fillText(formatScore(Math.floor(score)),12,12);
+  ctx.fillText(formatScore(Math.floor(score)),hudPad,hudTop);
 
   // Time (center)
   ctx.textAlign='center';
   const mins=Math.floor(gameTime/60);
   const secs=Math.floor(gameTime%60);
   ctx.fillStyle='#fff';
-  ctx.font='bold 18px sans-serif';
-  ctx.fillText(`${mins}:${secs.toString().padStart(2,'0')}`,W/2,12);
+  ctx.font=`bold ${Math.round(18*S)}px sans-serif`;
+  ctx.fillText(`${mins}:${secs.toString().padStart(2,'0')}`,W/2,hudTop);
 
   // Graze (right)
   ctx.textAlign='right';
-  ctx.font='14px sans-serif';
+  ctx.font=`${Math.round(14*S)}px sans-serif`;
   ctx.fillStyle='#aaa';
-  ctx.fillText(`擦弹 ${grazeCount}`,W-12,12);
+  ctx.fillText(`擦弹 ${grazeCount}`,W-hudPad,hudTop);
   if(grazeCombo>1){
     ctx.fillStyle='#fff';
-    ctx.font='bold 14px sans-serif';
-    ctx.fillText(`×${grazeCombo}`,W-12,30);
+    ctx.font=`bold ${Math.round(14*S)}px sans-serif`;
+    ctx.fillText(`×${grazeCombo}`,W-hudPad,hudTop+Math.round(18*S));
   }
   ctx.restore();
 }
 
 function drawDashButton(){
   if(state!==State.PLAYING)return;
-  const bx=W-55,by=H-90,br=28;
+  const br=Math.round(28*S);
+  const bx=W-br*2-W*0.04,by=H-safeBottom-br*2-H*0.05;
   ctx.save();
 
   // Button circle background
@@ -886,7 +902,7 @@ function drawDashButton(){
 
   // Label
   ctx.globalAlpha=dashCooldown>0?0.4:0.9;
-  ctx.font='bold 13px sans-serif';
+  ctx.font=`bold ${Math.round(13*S)}px sans-serif`;
   ctx.textAlign='center';
   ctx.textBaseline='middle';
   ctx.fillStyle=COLORS.GOLD;
@@ -900,59 +916,60 @@ function drawTitle(){
   const cy=H*0.3;
 
   // Back button
-  ctx.font='bold 16px sans-serif';
+  ctx.font=`bold ${Math.round(16*S)}px sans-serif`;
   ctx.textAlign='left';
   ctx.textBaseline='middle';
   ctx.fillStyle=COLORS.GOLD;
-  ctx.fillText('\u2190 \u8FD4\u56DE',20,40);
+  ctx.fillText('\u2190 \u8FD4\u56DE',W*0.05,safeTop+H*0.04);
 
   // Avatar
+  const avatarR=Math.round(45*S);
   const avatar=getAvatarImage(GAME_HEROES.DIAOCHAN);
   if(avatar){
     ctx.beginPath();
-    ctx.arc(W/2,cy,45,0,Math.PI*2);
+    ctx.arc(W/2,cy,avatarR,0,Math.PI*2);
     ctx.closePath();
     ctx.clip();
-    ctx.drawImage(avatar,W/2-45,cy-45,90,90);
+    ctx.drawImage(avatar,W/2-avatarR,cy-avatarR,avatarR*2,avatarR*2);
     ctx.restore();
     ctx.save();
     // Ring
     ctx.beginPath();
-    ctx.arc(W/2,cy,47,0,Math.PI*2);
+    ctx.arc(W/2,cy,avatarR+2,0,Math.PI*2);
     ctx.strokeStyle=COLORS.GOLD;
     ctx.lineWidth=2;
     ctx.stroke();
   }
 
   // Title
-  ctx.font='bold 28px sans-serif';
+  ctx.font=`bold ${Math.round(28*S)}px sans-serif`;
   ctx.textAlign='center';
   ctx.textBaseline='middle';
   ctx.fillStyle=COLORS.GOLD;
-  ctx.fillText('貂蝉·弹幕舞步',W/2,cy+80);
+  ctx.fillText('貂蝉·弹幕舞步',W/2,cy+Math.round(80*S));
 
-  ctx.font='14px sans-serif';
+  ctx.font=`${Math.round(14*S)}px sans-serif`;
   ctx.fillStyle='#888';
-  ctx.fillText('Bullet Dance',W/2,cy+106);
+  ctx.fillText('Bullet Dance',W/2,cy+Math.round(106*S));
 
   // Personal best
   const best=getPersonalBest(GAME_ID);
   if(best){
-    ctx.font='14px sans-serif';
+    ctx.font=`${Math.round(14*S)}px sans-serif`;
     ctx.fillStyle='#aaa';
-    ctx.fillText(`最高分: ${formatScore(best.score)}`,W/2,cy+140);
+    ctx.fillText(`最高分: ${formatScore(best.score)}`,W/2,cy+Math.round(140*S));
   }
 
   // Start prompt
   const pulse=0.5+Math.sin(performance.now()/500)*0.3;
   ctx.globalAlpha=pulse;
-  ctx.font='bold 20px sans-serif';
+  ctx.font=`bold ${Math.round(20*S)}px sans-serif`;
   ctx.fillStyle='#fff';
   ctx.fillText('点击开始',W/2,H*0.72);
   ctx.globalAlpha=1;
 
   // Instructions
-  ctx.font='12px sans-serif';
+  ctx.font=`${Math.round(12*S)}px sans-serif`;
   ctx.fillStyle='#555';
   ctx.fillText('左侧滑动移动 · 右侧点击闪避',W/2,H*0.82);
   ctx.fillText('擦弹得分 · 活得更久',W/2,H*0.86);
@@ -972,7 +989,7 @@ function drawCountdown(){
   ctx.fillRect(0,0,W,H);
 
   ctx.globalAlpha=1;
-  ctx.font='bold 72px sans-serif';
+  ctx.font=`bold ${Math.round(72*S)}px sans-serif`;
   ctx.textAlign='center';
   ctx.textBaseline='middle';
   ctx.fillStyle=COLORS.GOLD;
@@ -989,7 +1006,8 @@ function drawGameOver(){
 
   const cy=H*0.15;
 
-  ctx.font='bold 26px sans-serif';
+  const lsp=Math.round(24*S); // line spacing
+  ctx.font=`bold ${Math.round(26*S)}px sans-serif`;
   ctx.textAlign='center';
   ctx.textBaseline='middle';
   ctx.fillStyle=COLORS.RED;
@@ -998,35 +1016,35 @@ function drawGameOver(){
   // Time survived
   const mins=Math.floor(gameTime/60);
   const secs=Math.floor(gameTime%60);
-  ctx.font='16px sans-serif';
+  ctx.font=`${Math.round(16*S)}px sans-serif`;
   ctx.fillStyle='#aaa';
-  ctx.fillText(`存活时间: ${mins}:${secs.toString().padStart(2,'0')}`,W/2,cy+38);
+  ctx.fillText(`存活时间: ${mins}:${secs.toString().padStart(2,'0')}`,W/2,cy+Math.round(38*S));
 
   // Score breakdown
   const timeScore=Math.floor(gameTime)*10;
   const grazeScore=Math.floor(score)-timeScore;
 
-  ctx.font='bold 32px sans-serif';
+  ctx.font=`bold ${Math.round(32*S)}px sans-serif`;
   ctx.fillStyle=COLORS.GOLD;
-  ctx.fillText(formatScore(Math.floor(score)),W/2,cy+80);
+  ctx.fillText(formatScore(Math.floor(score)),W/2,cy+Math.round(80*S));
 
-  ctx.font='12px sans-serif';
+  ctx.font=`${Math.round(12*S)}px sans-serif`;
   ctx.fillStyle='#777';
-  ctx.fillText(`时间得分 ${formatScore(timeScore)} + 擦弹得分 ${formatScore(Math.max(0,grazeScore))}`,W/2,cy+108);
-  ctx.fillText(`擦弹次数: ${grazeCount}`,W/2,cy+128);
+  ctx.fillText(`时间得分 ${formatScore(timeScore)} + 擦弹得分 ${formatScore(Math.max(0,grazeScore))}`,W/2,cy+Math.round(108*S));
+  ctx.fillText(`擦弹次数: ${grazeCount}`,W/2,cy+Math.round(128*S));
 
   // Leaderboard
   const board=getLeaderboard(GAME_ID);
   const top5=board.slice(0,5);
   if(top5.length>0){
-    ctx.font='bold 14px sans-serif';
+    ctx.font=`bold ${Math.round(14*S)}px sans-serif`;
     ctx.fillStyle=COLORS.GOLD;
-    ctx.fillText('排行榜',W/2,cy+165);
+    ctx.fillText('排行榜',W/2,cy+Math.round(165*S));
 
-    ctx.font='13px sans-serif';
+    ctx.font=`${Math.round(13*S)}px sans-serif`;
     for(let i=0;i<top5.length;i++){
       const e=top5[i];
-      const yy=cy+190+i*24;
+      const yy=cy+Math.round(190*S)+i*lsp;
       ctx.fillStyle=i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'#888';
       ctx.textAlign='center';
       ctx.fillText(`${i+1}. ${formatScore(e.score)}`,W/2,yy);
@@ -1034,17 +1052,17 @@ function drawGameOver(){
   }
 
   // Retry
-  const retryY=Math.min(cy+190+Math.max(top5.length,1)*24+40,H*0.85);
+  const retryY=Math.min(cy+Math.round(190*S)+Math.max(top5.length,1)*lsp+Math.round(40*S),H*0.85);
   const pulse=0.5+Math.sin(performance.now()/500)*0.3;
   ctx.globalAlpha=pulse;
-  ctx.font='bold 20px sans-serif';
+  ctx.font=`bold ${Math.round(20*S)}px sans-serif`;
   ctx.textAlign='center';
   ctx.fillStyle='#fff';
   ctx.fillText('再来一局',W/2,retryY);
   ctx.globalAlpha=1;
 
   // Lobby button
-  ctx.font='bold 14px sans-serif';
+  ctx.font=`bold ${Math.round(14*S)}px sans-serif`;
   ctx.fillStyle='rgba(212,168,75,0.7)';
   ctx.fillText('\u8FD4\u56DE\u5927\u5385',W/2,H*0.93);
 
