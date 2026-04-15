@@ -17,7 +17,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action
 import{createCanvas,createGameLoop,createSwipeDetector,createTapDetector,createParticleSystem,createFloatingText,lineCircleCollision,drawRoundRect,formatScore,showOverlay,COLORS}from'../../shared/engine.js';
 import{loadHeroList,getHeroById,getRandomHeroes,getAvatarUrl,preloadAvatars,getAvatarImage,GAME_HEROES,TARGET_COLORS,HERO_ABILITIES}from'../../shared/heroes.js';
 import{initAudio}from'../../shared/audio.js';
-import{addScore,getLeaderboard,isHighScore,getPersonalBest}from'../../shared/leaderboard.js';
+import{addScore,getLeaderboard,isHighScore,isTopScore,getPersonalBest,getPlayerName}from'../../shared/leaderboard.js';
+import{showNicknameInput,renderMiniLeaderboard}from'../../shared/leaderboard-ui.js';
 import{getCurrentSeason}from'../../shared/season.js';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -72,6 +73,8 @@ let season=null;
 let heroPool=[];
 let personalBest=null;
 let titlePulse=0;
+let gameOverReady=false;
+let gameOverRank=-1;
 let screenShake=0;
 let comboDisplay=0,comboDisplayTimer=0;
 let missedEnemies=0; // for survival mode
@@ -452,6 +455,7 @@ function handleTap(x,y){
       startGame();
     }
   }else if(state===S_GAMEOVER){
+    if(!gameOverReady) return;
     if(pointInBtn(x,y,btnReplay)){
       if(audio) audio.setBGMVolume(0.2);
       state=S_TITLE;
@@ -537,15 +541,27 @@ function startGame(){
 
 function endGame(){
   state=S_GAMEOVER;
-  // Save score
-  const prevBest=getPersonalBest(GAME_ID);
-  const result=addScore(GAME_ID,score,LLW);
-  personalBest=getPersonalBest(GAME_ID);
-  const isNewRecord=result.rank===1&&score>0;
-  if(audio){
-    audio.setBGMVolume(0.15);
-    if(isNewRecord){ audio.playNewRecord(); }else{ audio.playDeath(); }
+  gameOverReady=false;
+  gameOverRank=-1;
+  if(audio) audio.setBGMVolume(0.15);
+
+  async function handleGameOver(){
+    if(isTopScore(GAME_ID,score)){
+      const name=await showNicknameInput(screen.canvas,score,'进入今日前5!');
+      const result=addScore(GAME_ID,score,name);
+      gameOverRank=result.rank;
+    }else{
+      const result=addScore(GAME_ID,score,getPlayerName());
+      gameOverRank=result.rank;
+    }
+    personalBest=getPersonalBest(GAME_ID);
+    const isNewRecord=gameOverRank===1&&score>0;
+    if(audio){
+      if(isNewRecord){ audio.playNewRecord(); }else{ audio.playDeath(); }
+    }
+    gameOverReady=true;
   }
+  handleGameOver();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1244,6 +1260,15 @@ function renderGameOver(){
   ctx.fillRect(0,0,W,H);
   ctx.globalAlpha=1;
 
+  if(!gameOverReady){
+    ctx.font='bold 20px sans-serif';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillStyle='rgba(255,255,255,0.3)';
+    ctx.fillText('...',W/2,H/2);
+    ctx.restore();
+    return;
+  }
+
   const cx=W/2;
   let y=H*0.12;
 
@@ -1281,23 +1306,13 @@ function renderGameOver(){
     y+=10;
   }
 
-  // Leaderboard
+  // Mini Leaderboard
   const lb=getLeaderboard(GAME_ID);
   if(lb.length>0){
-    ctx.font='bold 16px sans-serif';
-    ctx.fillStyle=COLORS.LIGHT_GOLD;
-    ctx.fillText('排行榜 TOP 5',cx,y);
-    y+=28;
-
-    ctx.font='14px sans-serif';
-    const top5=lb.slice(0,5);
-    for(let i=0;i<top5.length;i++){
-      const e=top5[i];
-      const isMe=e.score===score&&i===top5.findIndex(x=>x.score===score);
-      ctx.fillStyle=isMe?COLORS.GOLD:'rgba(255,255,255,0.7)';
-      ctx.fillText(`#${e.rank}  ${formatScore(e.score)}`,cx,y);
-      y+=22;
-    }
+    const lbW=Math.min(W*0.85,320);
+    renderMiniLeaderboard(ctx,cx-lbW/2,y,lbW,lb.slice(0,5),gameOverRank);
+    const lbH=lb.slice(0,5).length*Math.round(Math.max(13,Math.round(lbW/20))*2.2)+8;
+    y+=lbH+10;
   }
 
   // Replay button

@@ -18,7 +18,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action
 import{createCanvas,createGameLoop,createTapDetector,createParticleSystem,createFloatingText,circleCollision,lineCircleCollision,showOverlay,drawRoundRect,formatScore,COLORS}from'../../shared/engine.js';
 import{loadHeroList,getHeroById,getRandomHeroes,preloadAvatars,getAvatarImage,GAME_HEROES,HERO_TYPES,TARGET_COLORS,HERO_ABILITIES}from'../../shared/heroes.js';
 import{initAudio}from'../../shared/audio.js';
-import{addScore,getLeaderboard,getPersonalBest}from'../../shared/leaderboard.js';
+import{addScore,getLeaderboard,getPersonalBest,isTopScore,getPlayerName}from'../../shared/leaderboard.js';
+import{showNicknameInput,renderMiniLeaderboard}from'../../shared/leaderboard-ui.js';
 import{getCurrentSeason}from'../../shared/season.js';
 
 // ═══════════════════════════════════════════════════════════
@@ -118,6 +119,8 @@ let bestScore = null;
 let finalScore = 0;
 let isNewRecord = false;
 let leaderboard = [];
+let gameOverReady = false;
+let gameOverRank = -1;
 
 // Zhong Kui avatar
 let zhongkuiImg = null;
@@ -239,6 +242,7 @@ function handleTap(x, y) {
     return;
   }
   if (phase === Phase.GAMEOVER) {
+    if (!gameOverReady) return;
     // Check lobby button (rendered at H*0.93)
     if (y >= H * 0.90 && y <= H * 0.97 && x >= W / 2 - 80 && x <= W / 2 + 80) {
       if (audio) audio.stopBGM(0.3);
@@ -352,14 +356,30 @@ function startNextRound() {
 function endGame() {
   phase = Phase.GAMEOVER;
   finalScore = score;
-  const result = addScore(GAME_ID, finalScore, GAME_HEROES.ZHONGKUI, '玩家');
-  isNewRecord = result.rank === 1;
-  leaderboard = getLeaderboard(GAME_ID).slice(0, 5);
-  bestScore = getPersonalBest(GAME_ID);
-  if (audio) {
-    audio.setBGMVolume(0.15);
-    if (isNewRecord) { audio.playNewRecord(); } else { audio.playDeath(); }
+  gameOverReady = false;
+  gameOverRank = -1;
+
+  if (audio) audio.setBGMVolume(0.15);
+
+  async function handleGameOver() {
+    if (isTopScore(GAME_ID, finalScore)) {
+      const name = await showNicknameInput(screen.canvas, finalScore, '进入今日前5!');
+      const result = addScore(GAME_ID, finalScore, name);
+      gameOverRank = result.rank;
+      isNewRecord = result.rank === 1;
+    } else {
+      const result = addScore(GAME_ID, finalScore, getPlayerName());
+      gameOverRank = result.rank;
+      isNewRecord = result.rank === 1;
+    }
+    leaderboard = getLeaderboard(GAME_ID).slice(0, 5);
+    bestScore = getPersonalBest(GAME_ID);
+    if (audio) {
+      if (isNewRecord) { audio.playNewRecord(); } else { audio.playDeath(); }
+    }
+    gameOverReady = true;
   }
+  handleGameOver();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1671,6 +1691,17 @@ function drawGameOver() {
   ctx.fillRect(0, 0, W, H);
   ctx.globalAlpha = 1;
 
+  if (!gameOverReady) {
+    // Waiting for nickname input overlay
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText('...', W / 2, H / 2);
+    ctx.restore();
+    return;
+  }
+
   const cx = W / 2;
   const panelW = Math.min(W * 0.88, 340);
   const panelH = Math.min(H * 0.72, 520);
@@ -1721,43 +1752,13 @@ function drawGameOver() {
   ctx.font = '13px sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,0.4)';
   ctx.fillText('总分', cx, yOff);
-  yOff += 30;
+  yOff += 25;
 
-  // Leaderboard
+  // Mini Leaderboard
   if (leaderboard.length > 0) {
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillStyle = COL_GOLD;
-    ctx.fillText('\u2014 排行榜 TOP 5 \u2014', cx, yOff);
-    yOff += 20;
-
-    const colRank = panelX + 30;
-    const colName = panelX + 60;
-    const colScore = panelX + panelW - 30;
-    const entrySpacing = 24;
-
-    ctx.font = '12px sans-serif';
-    for (let i = 0; i < leaderboard.length; i++) {
-      const entry = leaderboard[i];
-      const ey = yOff + i * entrySpacing;
-      const rankColors = ['#FFD700', '#C0C0C0', '#CD7F32'];
-
-      ctx.textAlign = 'center';
-      ctx.fillStyle = i < 3 ? rankColors[i] : 'rgba(255,255,255,0.5)';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(`#${entry.rank}`, colRank, ey);
-
-      ctx.textAlign = 'left';
-      ctx.fillStyle = i < 3 ? '#fff' : 'rgba(255,255,255,0.6)';
-      ctx.font = '13px sans-serif';
-      ctx.fillText(entry.name || '玩家', colName, ey);
-
-      ctx.textAlign = 'right';
-      ctx.fillStyle = '#FFD700';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(formatScore(entry.score), colScore, ey);
-    }
-
-    yOff += leaderboard.length * entrySpacing + 15;
+    renderMiniLeaderboard(ctx, panelX + 10, yOff, panelW - 20, leaderboard, gameOverRank);
+    const lbH = leaderboard.length * Math.round(Math.max(13, Math.round((panelW - 20) / 20)) * 2.2) + 8;
+    yOff += lbH + 15;
   }
 
   // Play again button

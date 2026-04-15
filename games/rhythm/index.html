@@ -17,7 +17,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action
 import{createCanvas,createGameLoop,createParticleSystem,createFloatingText,drawRoundRect,formatScore,showOverlay,COLORS}from'../../shared/engine.js';
 import{loadHeroList,preloadAvatars,getAvatarImage,GAME_HEROES}from'../../shared/heroes.js';
 import{initAudio}from'../../shared/audio.js';
-import{addScore,getLeaderboard,getPersonalBest}from'../../shared/leaderboard.js';
+import{addScore,getLeaderboard,getPersonalBest,isTopScore,getPlayerName}from'../../shared/leaderboard.js';
+import{showNicknameInput,renderMiniLeaderboard}from'../../shared/leaderboard-ui.js';
 import{getCurrentSeason}from'../../shared/season.js';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -729,6 +730,8 @@ let isPaused = false;
 // Score
 let score = 0;
 let maxPossibleScore = 0;
+let gameOverReady = false;
+let gameOverRank = -1;
 let combo = 0;
 let maxCombo = 0;
 let judgments = { perfect: 0, great: 0, good: 0, miss: 0 };
@@ -1506,17 +1509,31 @@ function startPlaying() {
 function showResults() {
   state = S_RESULTS;
   stopMusic();
+  gameOverReady = false;
+  gameOverRank = -1;
 
-  const scoreRatio = maxPossibleScore > 0 ? score / maxPossibleScore : 0;
-  addScore(GAME_ID, score, LIBAI, '李白');
   audio && audio.playScore();
+
+  async function handleResults() {
+    if (isTopScore(GAME_ID, score)) {
+      const name = await showNicknameInput(screen.canvas, score, '进入今日前5!');
+      const result = addScore(GAME_ID, score, name);
+      gameOverRank = result.rank;
+    } else {
+      const result = addScore(GAME_ID, score, getPlayerName());
+      gameOverRank = result.rank;
+    }
+    gameOverReady = true;
+  }
+  handleResults();
 }
 
 function handleResultsTap(x, y) {
+  if (!gameOverReady) return;
   const btnW = W * 0.35;
   const btnH = H * 0.06;
   const gap = W * 0.05;
-  const baseY = H * 0.78;
+  const baseY = H * 0.82;
 
   // Retry
   const retryX = W / 2 - btnW - gap / 2;
@@ -2803,6 +2820,14 @@ function renderResults() {
   ctx.fillRect(0, 0, W, H);
   ctx.restore();
 
+  if (!gameOverReady) {
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText('...', W / 2, H / 2);
+    return;
+  }
+
   const cx = W / 2;
   const scoreRatio = maxPossibleScore > 0 ? score / maxPossibleScore : 0;
 
@@ -2827,7 +2852,7 @@ function renderResults() {
   // Grade circle
   ctx.save();
   ctx.beginPath();
-  ctx.arc(cx, H * 0.24, W * 0.1, 0, Math.PI * 2);
+  ctx.arc(cx, H * 0.22, W * 0.08, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(255,255,255,0.05)';
   ctx.fill();
   ctx.strokeStyle = gradeColors[grade];
@@ -2835,25 +2860,25 @@ function renderResults() {
   ctx.stroke();
 
   ctx.fillStyle = gradeColors[grade];
-  ctx.font = `bold ${W * 0.12}px sans-serif`;
+  ctx.font = `bold ${W * 0.1}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(grade, cx, H * 0.24);
+  ctx.fillText(grade, cx, H * 0.22);
   ctx.restore();
 
   // Score
   ctx.fillStyle = '#fff';
   ctx.font = `bold ${W * 0.08}px sans-serif`;
   ctx.textAlign = 'center';
-  ctx.fillText(formatScore(score), cx, H * 0.37);
+  ctx.fillText(formatScore(score), cx, H * 0.34);
 
   ctx.fillStyle = '#888';
   ctx.font = `${W * 0.03}px sans-serif`;
-  ctx.fillText(`满分 ${formatScore(maxPossibleScore)} · ${Math.round(scoreRatio * 100)}%`, cx, H * 0.42);
+  ctx.fillText(`满分 ${formatScore(maxPossibleScore)} · ${Math.round(scoreRatio * 100)}%`, cx, H * 0.39);
 
   // Judgment breakdown
-  const breakdownY = H * 0.48;
-  const lineH = H * 0.045;
+  const breakdownY = H * 0.44;
+  const lineH = H * 0.04;
   const labels = [
     ['PERFECT', judgments.perfect, '#FFD700'],
     ['GREAT', judgments.great, '#3498DB'],
@@ -2867,52 +2892,38 @@ function renderResults() {
 
     ctx.textAlign = 'left';
     ctx.fillStyle = color;
-    ctx.font = `bold ${W * 0.035}px sans-serif`;
+    ctx.font = `bold ${W * 0.033}px sans-serif`;
     ctx.fillText(label, W * 0.2, y);
 
     ctx.textAlign = 'right';
     ctx.fillStyle = '#fff';
-    ctx.font = `${W * 0.035}px sans-serif`;
+    ctx.font = `${W * 0.033}px sans-serif`;
     ctx.fillText(count.toString(), W * 0.8, y);
   }
 
   // Max combo
   ctx.textAlign = 'left';
   ctx.fillStyle = '#D4A84B';
-  ctx.font = `bold ${W * 0.035}px sans-serif`;
+  ctx.font = `bold ${W * 0.033}px sans-serif`;
   ctx.fillText('最大连击', W * 0.2, breakdownY + 4 * lineH + lineH * 0.5);
   ctx.textAlign = 'right';
   ctx.fillStyle = '#fff';
   ctx.fillText(maxCombo.toString(), W * 0.8, breakdownY + 4 * lineH + lineH * 0.5);
 
-  // Leaderboard
+  // Mini Leaderboard
   const lb = getLeaderboard(GAME_ID);
   if (lb.length > 0) {
-    const lbY = H * 0.68;
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.font = `${W * 0.03}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.fillText('排行榜', cx, lbY);
-
-    const topEntries = lb.slice(0, 3);
-    for (let i = 0; i < topEntries.length; i++) {
-      const entry = topEntries[i];
-      const y = lbY + (i + 1) * lineH;
-      ctx.textAlign = 'left';
-      ctx.fillStyle = i === 0 ? '#FFD700' : i === 1 ? '#C0C0C0' : '#CD7F32';
-      ctx.font = `${W * 0.03}px sans-serif`;
-      ctx.fillText(`#${entry.rank} ${entry.name}`, W * 0.2, y);
-      ctx.textAlign = 'right';
-      ctx.fillStyle = '#fff';
-      ctx.fillText(formatScore(entry.score), W * 0.8, y);
-    }
+    const lbW = Math.min(W * 0.85, 320);
+    const lbX = cx - lbW / 2;
+    const lbY = H * 0.66;
+    renderMiniLeaderboard(ctx, lbX, lbY, lbW, lb.slice(0, 5), gameOverRank);
   }
 
   // Buttons
   const btnW = W * 0.35;
   const btnH = H * 0.06;
   const gap = W * 0.05;
-  const btnY = H * 0.78;
+  const btnY = H * 0.82;
 
   // Retry
   const retryX = cx - btnW - gap / 2;

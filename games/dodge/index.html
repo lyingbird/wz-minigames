@@ -17,7 +17,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action
 import{createCanvas,createGameLoop,createJoystick,createTapDetector,createParticleSystem,createFloatingText,createPool,circleCollision,pointInCircle,showOverlay,drawRoundRect,formatScore,COLORS}from'../../shared/engine.js';
 import{loadHeroList,preloadAvatars,getAvatarImage,GAME_HEROES}from'../../shared/heroes.js';
 import{initAudio}from'../../shared/audio.js';
-import{addScore,getLeaderboard,getPersonalBest}from'../../shared/leaderboard.js';
+import{addScore,getLeaderboard,getPersonalBest,isTopScore,getPlayerName}from'../../shared/leaderboard.js';
+import{showNicknameInput,renderMiniLeaderboard}from'../../shared/leaderboard-ui.js';
 import{getCurrentSeason}from'../../shared/season.js';
 
 const GAME_ID='dodge';
@@ -59,6 +60,8 @@ let countdownVal=3,countdownTimer=0;
 let dyingTimer=0;
 let screenFlash=0;
 let edgeFlash=0;
+let gameOverReady=false;
+let gameOverRank=-1;
 
 // Fate circle
 let fateTimer=0,fateActive=false,fateX=0,fateY=0,fateDuration=0,fateCollected=false;
@@ -104,6 +107,7 @@ async function init(){
       }
       startGame();
     }else if(state===State.GAMEOVER){
+      if(!gameOverReady) return;
       // Check lobby button at bottom of screen (rendered at H*0.93)
       if(y>=H*0.90&&y<=H*0.97&&x>=W*0.2&&x<=W*0.8){
         if(audio) audio.stopBGM(0.3);
@@ -277,12 +281,24 @@ function update(dt){
     dyingTimer+=dt;
     if(dyingTimer>=1.0){
       state=State.GAMEOVER;
-      // Save score
-      const result=addScore(GAME_ID,Math.floor(score),GAME_HEROES.DIAOCHAN);
-      if(audio){
-        audio.setBGMVolume(0.15);
-        if(result.rank===1&&score>0) audio.playNewRecord();
+      gameOverReady=false;
+      gameOverRank=-1;
+      if(audio) audio.setBGMVolume(0.15);
+
+      async function handleGameOver(){
+        const finalScore=Math.floor(score);
+        if(isTopScore(GAME_ID,finalScore)){
+          const name=await showNicknameInput(screen.canvas,finalScore,'进入今日前5!');
+          const result=addScore(GAME_ID,finalScore,name);
+          gameOverRank=result.rank;
+        }else{
+          const result=addScore(GAME_ID,finalScore,getPlayerName());
+          gameOverRank=result.rank;
+        }
+        if(audio&&gameOverRank===1&&finalScore>0) audio.playNewRecord();
+        gameOverReady=true;
       }
+      handleGameOver();
     }
     return;
   }
@@ -1029,6 +1045,15 @@ function drawGameOver(){
   ctx.fillRect(0,0,W,H);
   ctx.globalAlpha=1;
 
+  if(!gameOverReady){
+    ctx.font='bold 20px sans-serif';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillStyle='rgba(255,255,255,0.3)';
+    ctx.fillText('...',W/2,H/2);
+    ctx.restore();
+    return;
+  }
+
   const cy=H*0.15;
 
   const lsp=24; // line spacing
@@ -1045,10 +1070,6 @@ function drawGameOver(){
   ctx.fillStyle='#aaa';
   ctx.fillText(`存活时间: ${mins}:${secs.toString().padStart(2,'0')}`,W/2,cy+38);
 
-  // Score breakdown
-  const timeScore=Math.floor(gameTime)*10;
-  const waveBonus=waveNum*(waveNum+1)*50; // approximate wave bonus total
-
   ctx.font=`bold ${32}px sans-serif`;
   ctx.fillStyle=COLORS.GOLD;
   ctx.fillText(formatScore(Math.floor(score)),W/2,cy+80);
@@ -1057,26 +1078,21 @@ function drawGameOver(){
   ctx.fillStyle='#777';
   ctx.fillText(`存活 ${Math.floor(gameTime)}秒 · 波次 ${waveNum} · 最高${[1,1.2,1.5,2.0][survivalCombo]}x连续倍率`,W/2,cy+108);
 
-  // Leaderboard
+  // Mini Leaderboard
   const board=getLeaderboard(GAME_ID);
   const top5=board.slice(0,5);
+  let lbBottom=cy+130;
   if(top5.length>0){
-    ctx.font=`bold ${14}px sans-serif`;
-    ctx.fillStyle=COLORS.GOLD;
-    ctx.fillText('排行榜',W/2,cy+165);
-
-    ctx.font=`${13}px sans-serif`;
-    for(let i=0;i<top5.length;i++){
-      const e=top5[i];
-      const yy=cy+190+i*lsp;
-      ctx.fillStyle=i===0?'#FFD700':i===1?'#C0C0C0':i===2?'#CD7F32':'#888';
-      ctx.textAlign='center';
-      ctx.fillText(`${i+1}. ${formatScore(e.score)}`,W/2,yy);
-    }
+    const lbW=Math.min(W*0.85,320);
+    const lbX=W/2-lbW/2;
+    const lbY=cy+130;
+    renderMiniLeaderboard(ctx,lbX,lbY,lbW,top5,gameOverRank);
+    const lbH=top5.length*Math.round(Math.max(13,Math.round(lbW/20))*2.2)+8;
+    lbBottom=lbY+lbH;
   }
 
   // Retry
-  const retryY=Math.min(cy+190+Math.max(top5.length,1)*lsp+40,H*0.85);
+  const retryY=Math.min(lbBottom+30,H*0.85);
   const pulse=0.5+Math.sin(performance.now()/500)*0.3;
   ctx.globalAlpha=pulse;
   ctx.font=`bold ${20}px sans-serif`;
