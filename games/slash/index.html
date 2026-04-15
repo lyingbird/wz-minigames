@@ -15,7 +15,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action
 <div id="game"></div>
 <script type="module">
 import{createCanvas,createGameLoop,createSwipeDetector,createTapDetector,createParticleSystem,createFloatingText,lineCircleCollision,drawRoundRect,formatScore,showOverlay,COLORS}from'../../shared/engine.js';
-import{loadHeroList,getHeroById,getRandomHeroes,getAvatarUrl,preloadAvatars,getAvatarImage,GAME_HEROES}from'../../shared/heroes.js';
+import{loadHeroList,getHeroById,getRandomHeroes,getAvatarUrl,preloadAvatars,getAvatarImage,GAME_HEROES,TARGET_COLORS,HERO_ABILITIES}from'../../shared/heroes.js';
 import{initAudio}from'../../shared/audio.js';
 import{addScore,getLeaderboard,isHighScore,getPersonalBest}from'../../shared/leaderboard.js';
 import{getCurrentSeason}from'../../shared/season.js';
@@ -185,7 +185,7 @@ function setupMouseSwipe(){
 function createTarget(type){
   const margin=Math.round(W*0.1);
   const x=margin+Math.random()*(W-margin*2);
-  const baseVY=-(H*0.42+Math.random()*H*0.24);
+  let baseVY=-(H*0.42+Math.random()*H*0.24);
   const vx=(Math.random()-0.5)*120;
   let r=TARGET_RADIUS;
   let points=30;
@@ -198,6 +198,28 @@ function createTarget(type){
   else if(type===T_BUFF_BLUE||type===T_BUFF_RED||type===T_BUFF_GREEN){ename=0;r=24;points=0;}
   else if(type===T_BOMB){ename=0;r=26;points=0;}
 
+  // Hero ability flavor
+  let ability = null;
+  let shieldHP = 0;
+  let wigglePhase = Math.random() * Math.PI * 2;
+  let blinkUsed = false;
+  const abilityData = ename ? HERO_ABILITIES[ename] : null;
+  if (abilityData && (type === T_ENEMY_COMMON || type === T_ENEMY_REGULAR || type === T_ENEMY_RARE)) {
+    ability = abilityData.passive;
+    switch (ability) {
+      case 'charge': // 赵云: faster upward = shorter hang time
+        baseVY *= 1.25;
+        break;
+      case 'tiny': // 鲁班: 70% size
+        r = Math.round(r * 0.7);
+        break;
+      case 'shield': // 亚瑟: requires 2 slashes
+        shieldHP = 1;
+        break;
+      // dash (韩信), clone (孙悟空), blink (公孙离) handled in update/swipe
+    }
+  }
+
   return{
     x,y:H+r+10,
     vx,vy:baseVY,
@@ -205,7 +227,8 @@ function createTarget(type){
     alive:true,slashed:false,
     rotation:0,rotSpeed:(Math.random()-0.5)*3,
     glowPhase:Math.random()*Math.PI*2,
-    spawnTime:gameTime
+    spawnTime:gameTime,
+    ability,shieldHP,wigglePhase,blinkUsed,isClone:false
   };
 }
 
@@ -275,6 +298,14 @@ function handleSwipe(pts,velocity){
     }
     if(!hit)continue;
 
+    // Hero ability: 亚瑟 shield — absorb first slash
+    if(t.ability==='shield'&&t.shieldHP>0){
+      t.shieldHP--;
+      floatText.add(t.x,t.y,'护盾!',{color:'#3498DB',size:18,duration:0.6});
+      particles.emit(t.x,t.y,{count:6,speed:60,color:'#3498DB',size:3,gravity:50});
+      continue; // not slashed yet
+    }
+
     // We hit this target
     t.slashed=true;
     t.alive=false;
@@ -330,6 +361,20 @@ function handleSwipe(pts,velocity){
       particles.emit(t.x,t.y,{count:12,speed:150,color,size:4,gravity:200});
       floatText.add(t.x,t.y,`+${pts_val}`,{color:doubleTimer>0?COLORS.RED:COLORS.GOLD,size:22,duration:0.8});
       createSplitHalves(t,pts);
+
+      // Hero ability: 孙悟空 clone — 30% chance to split into 2 (clone gives half pts)
+      if(t.ability==='clone'&&Math.random()<0.3){
+        const clone=createTarget(t.type);
+        clone.x=t.x+(Math.random()-0.5)*40;
+        clone.y=t.y;
+        clone.vy=t.vy*0.8;
+        clone.vx=(Math.random()-0.5)*80;
+        clone.ename=t.ename;
+        clone.points=Math.round(t.points/2);
+        clone.ability=null; // clone has no further ability
+        clone.isClone=true;
+        targets.push(clone);
+      }
     }
   }
 
@@ -577,6 +622,18 @@ function update(dt){
     t.y+=t.vy*dt*timeScale;
     t.rotation+=t.rotSpeed*dt*timeScale;
     t.glowPhase+=dt*3;
+
+    // Hero ability: 韩信 wiggle
+    if(t.ability==='dash'){
+      t.wigglePhase+=dt*8;
+      t.x+=Math.sin(t.wigglePhase)*40*dt;
+    }
+    // Hero ability: 公孙离 blink (once during flight, near peak)
+    if(t.ability==='blink'&&!t.blinkUsed&&t.vy>-30&&t.vy<30){
+      t.blinkUsed=true;
+      t.x=Math.random()*(W*0.6)+W*0.2;
+      particles.emit(t.x,t.y,{count:8,speed:80,color:'#00FFFF',size:3,gravity:50});
+    }
 
     // Off screen bottom
     if(t.y>H+t.r+50){
@@ -862,31 +919,33 @@ function renderTarget(t){
 
   const glowAmt=Math.sin(t.glowPhase)*0.3+0.7;
 
-  // Glow
+  // Glow — semantic colors
   if(t.type===T_ENEMY_RARE){
-    ctx.shadowColor=COLORS.GOLD;ctx.shadowBlur=18*glowAmt;
+    ctx.shadowColor=TARGET_COLORS.VALUE;ctx.shadowBlur=18*glowAmt;
   }else if(t.type===T_ALLY){
-    ctx.shadowColor=COLORS.BLUE;ctx.shadowBlur=15*glowAmt;
+    ctx.shadowColor=TARGET_COLORS.DANGER;ctx.shadowBlur=15*glowAmt;
   }else if(t.type===T_BOMB){
-    ctx.shadowColor=COLORS.RED;ctx.shadowBlur=20*glowAmt;
+    ctx.shadowColor=TARGET_COLORS.DANGER;ctx.shadowBlur=20*glowAmt;
   }else if(t.type>=T_BUFF_BLUE&&t.type<=T_BUFF_GREEN){
-    const buffColors=['#00CCFF',COLORS.RED,'#44FF44'];
-    ctx.shadowColor=buffColors[t.type-T_BUFF_BLUE];
+    ctx.shadowColor=TARGET_COLORS.SPECIAL;
     ctx.shadowBlur=15*glowAmt;
   }else{
     ctx.shadowColor='rgba(0,0,0,0.5)';ctx.shadowBlur=8;
   }
+
+  // Clone transparency (孙悟空)
+  if(t.isClone){ctx.globalAlpha=0.5;}
 
   // Background circle
   ctx.beginPath();
   ctx.arc(0,0,t.r,0,Math.PI*2);
 
   if(t.type===T_BOMB){
-    // Red pulsing bomb
+    // Red pulsing bomb (DANGER)
     const pulse=0.8+Math.sin(t.glowPhase*2)*0.2;
     ctx.fillStyle=`rgba(231,76,60,${pulse})`;
     ctx.fill();
-    ctx.strokeStyle='#FF2200';ctx.lineWidth=2;ctx.stroke();
+    ctx.strokeStyle=TARGET_COLORS.DANGER;ctx.lineWidth=2;ctx.stroke();
     ctx.shadowBlur=0;
     // Lightning symbol
     ctx.font=`bold ${Math.round(t.r)}px sans-serif`;
@@ -894,9 +953,9 @@ function renderTarget(t){
     ctx.fillStyle='#FFF';
     ctx.fillText('⚡',0,0);
   }else if(t.type>=T_BUFF_BLUE&&t.type<=T_BUFF_GREEN){
-    const buffColors=['#00CCFF','#FF4444','#44FF44'];
+    const buffColorsList=[TARGET_COLORS.SPECIAL,'#FF4444','#44FF44'];
     const buffLabels=['蓝','红','绿'];
-    const c=buffColors[t.type-T_BUFF_BLUE];
+    const c=buffColorsList[t.type-T_BUFF_BLUE];
     const grad=ctx.createRadialGradient(0,0,0,0,0,t.r);
     grad.addColorStop(0,'rgba(255,255,255,0.9)');
     grad.addColorStop(0.6,c);
@@ -922,26 +981,37 @@ function renderTarget(t){
       ctx.fillStyle='#333';ctx.fill();
     }
 
-    // Border
+    // Border — semantic colors
     ctx.beginPath();
     ctx.arc(0,0,t.r,0,Math.PI*2);
     if(t.type===T_ALLY){
-      ctx.strokeStyle=COLORS.BLUE;ctx.lineWidth=3;
-      // Shield indicator
+      ctx.strokeStyle=TARGET_COLORS.DANGER;ctx.lineWidth=3;
+      // Danger ring for ally (don't slash!)
       ctx.save();
       ctx.shadowBlur=0;
       ctx.beginPath();
       ctx.arc(0,0,t.r+4,0,Math.PI*2);
-      ctx.strokeStyle='rgba(52,152,219,0.4)';ctx.lineWidth=4;ctx.stroke();
+      ctx.strokeStyle='rgba(231,76,60,0.4)';ctx.lineWidth=4;ctx.stroke();
       ctx.restore();
     }else if(t.type===T_ENEMY_RARE){
-      ctx.strokeStyle=COLORS.GOLD;ctx.lineWidth=3;
+      ctx.strokeStyle=TARGET_COLORS.VALUE;ctx.lineWidth=3;
     }else if(t.type===T_ENEMY_COMMON){
-      ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1.5;
+      ctx.strokeStyle=TARGET_COLORS.DEFAULT;ctx.lineWidth=1.5;
     }else{
-      ctx.strokeStyle=COLORS.RED;ctx.lineWidth=2;
+      ctx.strokeStyle=TARGET_COLORS.DEFAULT;ctx.lineWidth=2;
     }
     ctx.stroke();
+
+    // Shield indicator (亚瑟 ability)
+    if(t.ability==='shield'&&t.shieldHP>0){
+      ctx.save();
+      ctx.shadowBlur=0;
+      ctx.beginPath();
+      ctx.arc(0,0,t.r+6,0,Math.PI*2);
+      ctx.strokeStyle='rgba(52,152,219,0.5)';ctx.lineWidth=3;
+      ctx.setLineDash([4,3]);ctx.stroke();ctx.setLineDash([]);
+      ctx.restore();
+    }
   }
 
   ctx.restore();
@@ -981,8 +1051,8 @@ function renderHalf(h){
     ctx.fill();
   }
 
-  // Border
-  const borderColor=h.type===T_ALLY?COLORS.BLUE:h.type===T_ENEMY_RARE?COLORS.GOLD:COLORS.RED;
+  // Border — semantic
+  const borderColor=h.type===T_ALLY?TARGET_COLORS.DANGER:h.type===T_ENEMY_RARE?TARGET_COLORS.VALUE:TARGET_COLORS.DEFAULT;
   ctx.beginPath();
   ctx.arc(0,0,h.r,0,Math.PI*2);
   ctx.strokeStyle=borderColor;ctx.lineWidth=2;ctx.stroke();

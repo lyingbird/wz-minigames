@@ -16,7 +16,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#0a0a1a;touch-action
 <div id="game"></div>
 <script type="module">
 import{createCanvas,createGameLoop,createTapDetector,createParticleSystem,createFloatingText,circleCollision,lineCircleCollision,showOverlay,drawRoundRect,formatScore,COLORS}from'../../shared/engine.js';
-import{loadHeroList,getHeroById,getRandomHeroes,preloadAvatars,getAvatarImage,GAME_HEROES,HERO_TYPES}from'../../shared/heroes.js';
+import{loadHeroList,getHeroById,getRandomHeroes,preloadAvatars,getAvatarImage,GAME_HEROES,HERO_TYPES,TARGET_COLORS,HERO_ABILITIES}from'../../shared/heroes.js';
 import{initAudio}from'../../shared/audio.js';
 import{addScore,getLeaderboard,getPersonalBest}from'../../shared/leaderboard.js';
 import{getCurrentSeason}from'../../shared/season.js';
@@ -122,6 +122,35 @@ let leaderboard = [];
 // Zhong Kui avatar
 let zhongkuiImg = null;
 
+// ── Soul System (灵魂收集) ──
+let soulCount = 0;
+const SOUL_MAX = 5;
+let soulOrbitAngle = 0;      // animated orbit
+let ultAvailable = false;
+let ultActive = false;
+let ultTimer = 0;
+const ULT_DURATION = 2.0;     // seconds targets are pulled
+let ultUsedThisRound = false;
+
+// ── Fear Aura (恐惧光环) ──
+// Targets that got "near-missed" receive a fear debuff
+// { target, timer }
+let fearedTargets = [];
+
+// ── Hero ability state on targets ──
+// Extra fields added to target objects:
+//   shieldHP: number (for 亚瑟 shield)
+//   isClone: boolean (for 孙悟空 clone - gives 0 pts)
+//   immuneUsed: boolean (for 庄周 - first hook passes through)
+//   dashTimer: number (for 韩信 - direction change timer)
+//   blinkUsed: boolean (for 公孙离 - teleport once)
+//   fireTrails: [{x,y,timer}] (for 安琪拉 fire trail)
+let fireTrails = [];   // global fire trails from 安琪拉
+
+// List of ability hero enames that can appear per round
+const ABILITY_ENAMES_R2 = [109, 107, 112]; // 妲己, 赵云, 鲁班 (easy abilities)
+const ABILITY_ENAMES_R3 = [109, 107, 112, 150, 166, 142, 167, 113, 105, 199]; // all
+
 // ═══════════════════════════════════════════════════════════
 // Initialization
 // ═══════════════════════════════════════════════════════════
@@ -219,8 +248,20 @@ function handleTap(x, y) {
     startGame();
     return;
   }
-  if (phase === Phase.PLAYING && hookState === 'swing') {
-    launchHook();
+  if (phase === Phase.PLAYING) {
+    // Check ult button tap (bottom center)
+    const ultBtnY = H - safeBottom - 55;
+    const ultBtnW = 100, ultBtnH = 40;
+    const ultBtnX = W / 2 - ultBtnW / 2;
+    if (ultAvailable && !ultUsedThisRound &&
+        x >= ultBtnX && x <= ultBtnX + ultBtnW &&
+        y >= ultBtnY && y <= ultBtnY + ultBtnH) {
+      activateUlt();
+      return;
+    }
+    if (hookState === 'swing') {
+      launchHook();
+    }
   }
 }
 
@@ -240,6 +281,12 @@ function startGame() {
 
   score = 0;
   currentRound = 1;
+  soulCount = 0;
+  ultAvailable = false;
+  ultActive = false;
+  ultTimer = 0;
+  fearedTargets = [];
+  fireTrails = [];
   phase = Phase.COUNTDOWN;
   countdownVal = 3;
   countdownTimer = 0;
@@ -252,6 +299,9 @@ function prepareRound() {
   targets = [];
   roundTimer = ROUND_TIME;
   bonusTimeAdded = 0;
+  ultUsedThisRound = false;
+  fearedTargets = [];
+  fireTrails = [];
   resetHook();
   spawnTargetsForRound(currentRound);
 }
@@ -274,6 +324,17 @@ function launchHook() {
   hookLength = 0;
   hookedTarget = null;
   if (audio) audio.playHook();
+}
+
+function activateUlt() {
+  ultActive = true;
+  ultTimer = ULT_DURATION;
+  ultAvailable = false;
+  ultUsedThisRound = true;
+  soulCount = 0;
+  if (audio) { if (audio.playUlt) audio.playUlt(); else audio.playScore(); }
+  floatingText.add(W / 2, H * 0.35, '魂引!', { color: '#AA88FF', size: 36, duration: 1.5 });
+  particles.emit(W / 2, H * 0.15, { count: 25, speed: 180, color: '#AA88FF', size: 5, life: 1.0 });
 }
 
 function startNextRound() {
@@ -362,16 +423,20 @@ function spawnTargetsForRound(round) {
 
 function createMinion(lane, speedScale) {
   const dir = Math.random() < 0.5 ? 1 : -1;
+  const vx = dir * (lane.speedBase + Math.random() * 30) * speedScale;
   return {
     type: T_MINION,
     x: dir > 0 ? -20 + Math.random() * W * 0.8 : W + 20 - Math.random() * W * 0.8,
     y: lane.y + (Math.random() - 0.5) * 30,
-    vx: dir * (lane.speedBase + Math.random() * 30) * speedScale,
+    vx,
     radius: TARGET_DEFS[T_MINION].radius,
     ename: null,
     color: randomMinionColor(),
     alive: true,
     pulse: Math.random() * Math.PI * 2,
+    ability: null, fearTimer: 0, fearTint: 0, origSpeed: vx,
+    shieldHP: 0, isClone: false, immuneUsed: false, immuneCooldown: 0,
+    dashTimer: 0, blinkUsed: false,
   };
 }
 
@@ -379,47 +444,104 @@ function createHeroTarget(hero, lane, speedScale, forceTank = false) {
   const ttype = forceTank ? T_TANK : hero.ttype;
   const def = TARGET_DEFS[ttype];
   const dir = Math.random() < 0.5 ? 1 : -1;
-  return {
+  let vx = dir * (lane.speedBase * (ttype === T_TANK ? 0.5 : 0.7) + Math.random() * 20) * speedScale;
+  let radius = def.radius;
+
+  const t = {
     type: ttype,
     x: dir > 0 ? -30 + Math.random() * W * 0.7 : W + 30 - Math.random() * W * 0.7,
     y: lane.y + (Math.random() - 0.5) * 25,
-    vx: dir * (lane.speedBase * (ttype === T_TANK ? 0.5 : 0.7) + Math.random() * 20) * speedScale,
-    radius: def.radius,
+    vx,
+    radius,
     ename: hero.ename,
     cname: hero.cname,
     color: null,
     alive: true,
     pulse: Math.random() * Math.PI * 2,
+    // Ability fields
+    ability: null,
+    shieldHP: 0,
+    isClone: false,
+    immuneUsed: false,
+    immuneCooldown: 0,
+    dashTimer: 2 + Math.random(),
+    blinkUsed: false,
+    fearTimer: 0,
+    fearTint: 0,
+    origSpeed: vx,
   };
+
+  // Apply hero ability based on round
+  const abilityData = HERO_ABILITIES[hero.ename];
+  const activeAbilities = currentRound === 1 ? [] : currentRound === 2 ? ABILITY_ENAMES_R2 : ABILITY_ENAMES_R3;
+  if (abilityData && activeAbilities.includes(hero.ename)) {
+    t.ability = abilityData.passive;
+    switch (abilityData.passive) {
+      case 'charge': // 赵云: 1.5x speed, occasional burst
+        t.vx *= 1.5;
+        t.origSpeed = t.vx;
+        break;
+      case 'tiny': // 鲁班: 70% size, 1.3x speed
+        t.radius = Math.round(radius * 0.7);
+        t.vx *= 1.3;
+        t.origSpeed = t.vx;
+        break;
+      case 'shield': // 亚瑟: needs 2 hooks
+        t.shieldHP = 1;
+        break;
+      case 'heavy': // 廉颇: very slow retract, 150 pts
+        // We override score in processCapture
+        break;
+      case 'clone': // 孙悟空: 30% chance to spawn clone
+        if (Math.random() < 0.3) {
+          t.isClone = true;
+        }
+        break;
+      case 'immune': // 庄周: first hook passes through
+        t.immuneUsed = false;
+        break;
+      case 'blink': // 公孙离: teleports when hook is near
+        t.blinkUsed = false;
+        break;
+      // charm, dash, fire handled in update logic
+    }
+  }
+  return t;
 }
 
 function createBomb(lane, speedScale) {
   const dir = Math.random() < 0.5 ? 1 : -1;
+  const vxB = dir * (lane.speedBase * 0.8 + Math.random() * 25) * speedScale;
   return {
     type: T_BOMB,
     x: dir > 0 ? Math.random() * W * 0.6 : W - Math.random() * W * 0.6,
     y: lane.y + (Math.random() - 0.5) * 20,
-    vx: dir * (lane.speedBase * 0.8 + Math.random() * 25) * speedScale,
+    vx: vxB,
     radius: TARGET_DEFS[T_BOMB].radius,
     ename: null,
-    color: COL_RED,
+    color: TARGET_COLORS.DANGER,
     alive: true,
     pulse: Math.random() * Math.PI * 2,
+    ability: null, fearTimer: 0, fearTint: 0, origSpeed: vxB,
+    shieldHP: 0, isClone: false, immuneUsed: false, immuneCooldown: 0, dashTimer: 0, blinkUsed: false,
   };
 }
 
 function createTreasure(lane, speedScale) {
   const dir = Math.random() < 0.5 ? 1 : -1;
+  const vxT = dir * (lane.speedBase * 0.6 + Math.random() * 15) * speedScale;
   return {
     type: T_TREASURE,
     x: dir > 0 ? Math.random() * W * 0.5 : W * 0.5 + Math.random() * W * 0.5,
     y: lane.y + (Math.random() - 0.5) * 20,
-    vx: dir * (lane.speedBase * 0.6 + Math.random() * 15) * speedScale,
+    vx: vxT,
     radius: TARGET_DEFS[T_TREASURE].radius,
     ename: null,
-    color: '#FFD700',
+    color: TARGET_COLORS.SPECIAL,
     alive: true,
     pulse: Math.random() * Math.PI * 2,
+    ability: null, fearTimer: 0, fearTint: 0, origSpeed: vxT,
+    shieldHP: 0, isClone: false, immuneUsed: false, immuneCooldown: 0, dashTimer: 0, blinkUsed: false,
   };
 }
 
@@ -482,18 +604,92 @@ function updatePlaying(dt) {
   roundTimer -= dt;
   if (roundTimer <= 0) {
     roundTimer = 0;
-    // End round
     phase = Phase.ROUND_END;
     roundEndTimer = 0;
     resetHook();
     return;
   }
 
+  // Soul orbit animation
+  soulOrbitAngle += dt * 2.5;
+
+  // Ult pull logic
+  if (ultActive) {
+    ultTimer -= dt;
+    const centerX = W / 2, centerY = H * 0.55;
+    for (const t of targets) {
+      if (!t.alive || t === hookedTarget) continue;
+      const dx = centerX - t.x, dy = centerY - t.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 5) {
+        const pullSpeed = 200;
+        t.x += (dx / dist) * pullSpeed * dt;
+        t.y += (dy / dist) * pullSpeed * dt;
+      }
+    }
+    if (ultTimer <= 0) {
+      ultActive = false;
+    }
+  }
+
+  // Update fear timers
+  for (let i = fearedTargets.length - 1; i >= 0; i--) {
+    fearedTargets[i].timer -= dt;
+    if (fearedTargets[i].timer <= 0) {
+      const ft = fearedTargets[i].target;
+      if (ft.alive) { ft.vx = ft.origSpeed || ft.vx; ft.fearTint = 0; }
+      fearedTargets.splice(i, 1);
+    }
+  }
+
+  // Update fire trails (安琪拉)
+  for (let i = fireTrails.length - 1; i >= 0; i--) {
+    fireTrails[i].timer -= dt;
+    if (fireTrails[i].timer <= 0) fireTrails.splice(i, 1);
+  }
+
   // Update targets
   for (const t of targets) {
     if (!t.alive) continue;
-    if (t === hookedTarget) continue; // hooked targets don't move on their own
-    t.x += t.vx * dt;
+    if (t === hookedTarget) continue;
+
+    // Hero ability: 韩信 dash — change direction randomly
+    if (t.ability === 'dash') {
+      t.dashTimer -= dt;
+      if (t.dashTimer <= 0) {
+        t.dashTimer = 2 + Math.random();
+        t.vx = -t.vx * (0.8 + Math.random() * 0.4);
+        t.origSpeed = t.vx;
+      }
+    }
+
+    // Hero ability: 赵云 charge — occasional burst
+    if (t.ability === 'charge' && Math.random() < 0.005) {
+      t.vx = t.origSpeed * (1.8 + Math.random() * 0.5) * Math.sign(t.vx);
+      setTimeout(() => { if (t.alive) t.vx = t.origSpeed; }, 400);
+    }
+
+    // Hero ability: 安琪拉 fire — leave trail
+    if (t.ability === 'fire') {
+      if (!t._lastTrailX || Math.abs(t.x - t._lastTrailX) > 20) {
+        fireTrails.push({ x: t.x, y: t.y, timer: 3.0 });
+        t._lastTrailX = t.x;
+      }
+    }
+
+    // Hero ability: 庄周 immune cooldown
+    if (t.ability === 'immune' && t.immuneCooldown > 0) {
+      t.immuneCooldown -= dt;
+    }
+
+    // Apply fear slow
+    if (t.fearTimer > 0) {
+      t.x += t.vx * 0.5 * dt; // 0.5x speed
+      t.fearTimer -= dt;
+      t.fearTint = Math.max(0, t.fearTimer);
+    } else {
+      t.x += t.vx * dt;
+    }
     t.pulse += dt * 3;
 
     // Wrap/bounce
@@ -511,22 +707,82 @@ function updatePlaying(dt) {
       hookLength += HOOK_EXTEND_SPEED_BASE * dt;
       updateHookTip();
 
-      // Check collision with targets
-      for (const t of targets) {
-        if (!t.alive) continue;
-        if (circleCollision(hookTipX, hookTipY, HOOK_TIP_RADIUS, t.x, t.y, t.radius)) {
-          // Hooked!
-          hookedTarget = t;
-          hookState = 'retracting';
-          const def = TARGET_DEFS[t.type];
-          hookRetractSpeed = HOOK_RETRACT_EMPTY * def.retractMul;
-          if (audio) audio.playHit();
+      // Check fire trail collision (安琪拉 penalty)
+      for (const ft of fireTrails) {
+        const dx = hookTipX - ft.x, dy = hookTipY - ft.y;
+        if (dx * dx + dy * dy < 20 * 20) {
+          score = Math.max(0, score - 50);
+          floatingText.add(hookTipX, hookTipY, '-50', { color: '#FF4400', size: 22, duration: 0.8 });
+          particles.emit(hookTipX, hookTipY, { count: 8, speed: 80, color: '#FF4400', size: 3, life: 0.5 });
+          ft.timer = 0; // consume trail
           break;
         }
       }
 
+      // Check collision with targets
+      let hooked = false;
+      for (const t of targets) {
+        if (!t.alive) continue;
+        const dist = Math.sqrt((hookTipX - t.x) ** 2 + (hookTipY - t.y) ** 2);
+
+        // Hero ability: 公孙离 blink
+        if (t.ability === 'blink' && !t.blinkUsed && dist < 40 + t.radius) {
+          t.blinkUsed = true;
+          t.x = Math.random() * (W * 0.6) + W * 0.2;
+          t.y = t.y + (Math.random() - 0.5) * 60;
+          particles.emit(t.x, t.y, { count: 8, speed: 100, color: '#00FFFF', size: 3, life: 0.4 });
+          continue;
+        }
+
+        if (circleCollision(hookTipX, hookTipY, HOOK_TIP_RADIUS, t.x, t.y, t.radius)) {
+          // Hero ability: 庄周 immune — first hook passes through
+          if (t.ability === 'immune' && !t.immuneUsed && t.immuneCooldown <= 0) {
+            t.immuneUsed = true;
+            t.immuneCooldown = 2.0;
+            floatingText.add(t.x, t.y, '免疫!', { color: '#44DDFF', size: 18, duration: 0.6 });
+            continue;
+          }
+          // After cooldown, 庄周 can be hooked normally (immuneUsed is true)
+
+          // Hero ability: 亚瑟 shield — bounces first hit
+          if (t.ability === 'shield' && t.shieldHP > 0) {
+            t.shieldHP--;
+            floatingText.add(t.x, t.y, '护盾!', { color: '#3498DB', size: 18, duration: 0.6 });
+            particles.emit(t.x, t.y, { count: 8, speed: 80, color: '#3498DB', size: 3, life: 0.4 });
+            if (audio) audio.playHit();
+            // Bounce hook back
+            hookState = 'retracting';
+            hookRetractSpeed = HOOK_RETRACT_EMPTY;
+            hookedTarget = null;
+            hooked = true;
+            break;
+          }
+
+          // Normal hook
+          hookedTarget = t;
+          hookState = 'retracting';
+          const def = TARGET_DEFS[t.type];
+          let retractMul = def.retractMul;
+          // 廉颇 heavy: 0.2x retract
+          if (t.ability === 'heavy') retractMul = 0.2;
+          hookRetractSpeed = HOOK_RETRACT_EMPTY * retractMul;
+          if (audio) audio.playHit();
+          hooked = true;
+          break;
+        }
+
+        // Fear aura: near-miss detection (within 1.5x target radius but not touching)
+        if (dist < t.radius * 1.5 + HOOK_TIP_RADIUS && dist > t.radius + HOOK_TIP_RADIUS) {
+          if (!fearedTargets.find(f => f.target === t) && t.fearTimer <= 0) {
+            t.fearTimer = 1.0;
+            t.fearTint = 1.0;
+            fearedTargets.push({ target: t, timer: 1.0 });
+          }
+        }
+      }
+
       // Max length or off screen
-      if (hookLength >= hookMaxLength || hookTipY > H + 10 || hookTipX < -20 || hookTipX > W + 20) {
+      if (!hooked && (hookLength >= hookMaxLength || hookTipY > H + 10 || hookTipX < -20 || hookTipX > W + 20)) {
         hookState = 'retracting';
         hookRetractSpeed = HOOK_RETRACT_EMPTY;
         hookedTarget = null;
@@ -547,7 +803,6 @@ function updatePlaying(dt) {
         hookLength = 0;
         hookState = 'swing';
 
-        // Process hooked target
         if (hookedTarget) {
           processCapture(hookedTarget);
           hookedTarget = null;
@@ -575,27 +830,60 @@ function processCapture(target) {
   const scoreMod = season.modifiers?.scoreMultiplier || 1;
 
   if (target.type === T_BOMB) {
-    // Bomb penalty
     const pts = Math.round(def.score * scoreMod);
     score = Math.max(0, score + pts);
-    floatingText.add(target.x, target.y, `${pts}`, { color: COL_RED, size: 28, duration: 1.2 });
-    particles.emit(target.x, target.y, { count: 15, speed: 150, color: COL_RED, size: 5, life: 0.6 });
+    floatingText.add(target.x, target.y, `${pts}`, { color: TARGET_COLORS.DANGER, size: 28, duration: 1.2 });
+    particles.emit(target.x, target.y, { count: 15, speed: 150, color: TARGET_COLORS.DANGER, size: 5, life: 0.6 });
     if (audio) { audio.playExplosion(); audio.playDeath(); }
   } else if (target.type === T_TREASURE) {
-    // Bonus time
     const bonus = 5;
     roundTimer += bonus;
     bonusTimeAdded += bonus;
     floatingText.add(target.x, target.y, `+${bonus}秒!`, { color: '#00FF88', size: 28, duration: 1.5 });
-    particles.emit(target.x, target.y, { count: 20, speed: 120, color: '#FFD700', size: 4, life: 0.8 });
+    particles.emit(target.x, target.y, { count: 20, speed: 120, color: TARGET_COLORS.SPECIAL, size: 4, life: 0.8 });
     if (audio) audio.playPickup();
   } else {
-    // Score points
-    const pts = Math.round(def.score * scoreMod);
+    // Clone check (孙悟空)
+    if (target.isClone) {
+      floatingText.add(target.x, target.y, '分身!', { color: '#888', size: 20, duration: 0.8 });
+      target.alive = false;
+      return;
+    }
+
+    // 廉颇 heavy: override score to 150
+    let pts;
+    if (target.ability === 'heavy') {
+      pts = Math.round(150 * scoreMod);
+    } else {
+      pts = Math.round(def.score * scoreMod);
+    }
     score += pts;
     floatingText.add(target.x, target.y, `+${pts}`, { color: COL_GOLD, size: 26, duration: 1 });
     particles.emit(target.x, target.y, { count: 12, speed: 100, color: COL_GOLD, size: 4, life: 0.7 });
     if (audio) audio.playScore();
+
+    // Soul absorption
+    if (soulCount < SOUL_MAX && !ultUsedThisRound) {
+      soulCount++;
+      particles.emit(hookPivotX, hookPivotY - 20, { count: 5, speed: 50, color: '#AADDFF', size: 3, life: 0.6 });
+      if (soulCount >= SOUL_MAX) {
+        ultAvailable = true;
+        floatingText.add(W / 2, H * 0.3, '魂引就绪!', { color: '#AA88FF', size: 24, duration: 1.5 });
+      }
+    }
+
+    // Hero ability: 妲己 charm — nearby targets freeze 0.5s
+    if (target.ability === 'charm') {
+      for (const ot of targets) {
+        if (!ot.alive || ot === target) continue;
+        const dx = ot.x - target.x, dy = ot.y - target.y;
+        if (dx * dx + dy * dy < 80 * 80) {
+          ot.fearTimer = Math.max(ot.fearTimer, 0.5);
+          ot.fearTint = 0.5;
+          particles.emit(ot.x, ot.y, { count: 3, speed: 40, color: '#FF69B4', size: 2, life: 0.3 });
+        }
+      }
+    }
   }
 
   target.alive = false;
@@ -629,10 +917,14 @@ function render() {
       drawCountdown();
       break;
     case Phase.PLAYING:
+      drawFireTrails();
       drawTargets();
       drawHook();
       drawZhongKui();
+      drawSoulOrbs();
       drawHUD();
+      drawUltButton();
+      if (ultActive) drawUltOverlay();
       break;
     case Phase.ROUND_END:
       drawTargets();
@@ -912,13 +1204,16 @@ function drawSingleTarget(t) {
     case T_WARRIOR:
     case T_ASSASSIN:
     case T_TANK: {
-      // Hero avatar in circle
       const img = t.ename ? getAvatarImage(t.ename) : null;
 
-      // Glow for tanks
-      if (t.type === T_TANK) {
+      // Semantic border: high-value (50+ pts) = VALUE gold, else DEFAULT
+      const isHighValue = def.score >= 50;
+      const borderCol = isHighValue ? TARGET_COLORS.VALUE : TARGET_COLORS.DEFAULT;
+
+      // Glow for high-value targets
+      if (isHighValue) {
         ctx.save();
-        ctx.shadowColor = '#FFD700';
+        ctx.shadowColor = TARGET_COLORS.VALUE;
         ctx.shadowBlur = 15;
         ctx.beginPath();
         ctx.arc(t.x, t.y, r + 4, 0, Math.PI * 2);
@@ -926,6 +1221,23 @@ function drawSingleTarget(t) {
         ctx.lineWidth = 3;
         ctx.stroke();
         ctx.restore();
+      }
+
+      // Fear tint (purple overlay for near-missed targets)
+      if (t.fearTint > 0) {
+        ctx.save();
+        ctx.globalAlpha = t.fearTint * 0.4;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, r + 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#8B00FF';
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Clone transparency (孙悟空)
+      if (t.isClone) {
+        ctx.save();
+        ctx.globalAlpha = 0.45;
       }
 
       // Clip avatar
@@ -942,21 +1254,30 @@ function drawSingleTarget(t) {
       }
       ctx.restore();
 
-      // Border color by type
-      const borderColors = {
-        [T_MARKSMAN]: '#3498DB',
-        [T_MAGE]:     '#9B59B6',
-        [T_WARRIOR]:  '#E67E22',
-        [T_ASSASSIN]: '#E74C3C',
-        [T_TANK]:     '#FFD700',
-      };
+      if (t.isClone) ctx.restore(); // end clone transparency
+
+      // Border
       ctx.beginPath();
       ctx.arc(t.x, t.y, r + 1.5, 0, Math.PI * 2);
-      ctx.strokeStyle = borderColors[t.type] || COL_GOLD;
+      ctx.strokeStyle = borderCol;
       ctx.lineWidth = 2.5;
       ctx.stroke();
 
+      // Shield indicator (亚瑟)
+      if (t.ability === 'shield' && t.shieldHP > 0) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, r + 6, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(52,152,219,0.6)';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+
       // Score badge
+      const displayScore = t.ability === 'heavy' ? 150 : def.score;
       ctx.fillStyle = 'rgba(0,0,0,0.7)';
       const badgeW = r * 1.2;
       const badgeH = r * 0.5;
@@ -966,21 +1287,21 @@ function drawSingleTarget(t) {
       ctx.font = `bold ${Math.round(r * 0.35)}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(def.score, t.x, t.y + r + 2 + badgeH / 2);
+      ctx.fillText(displayScore, t.x, t.y + r + 2 + badgeH / 2);
       break;
     }
 
     case T_TREASURE:
-      // Golden sparkle circle
+      // Cyan sparkle circle (SPECIAL)
       ctx.save();
-      ctx.shadowColor = '#FFD700';
+      ctx.shadowColor = TARGET_COLORS.SPECIAL;
       ctx.shadowBlur = 12 + Math.sin(t.pulse * 2) * 6;
       ctx.beginPath();
       ctx.arc(t.x, t.y, r, 0, Math.PI * 2);
       const treasGrad = ctx.createRadialGradient(t.x - r * 0.3, t.y - r * 0.3, 1, t.x, t.y, r);
-      treasGrad.addColorStop(0, '#FFF8DC');
-      treasGrad.addColorStop(0.6, '#FFD700');
-      treasGrad.addColorStop(1, '#B8860B');
+      treasGrad.addColorStop(0, '#E0FFFF');
+      treasGrad.addColorStop(0.6, TARGET_COLORS.SPECIAL);
+      treasGrad.addColorStop(1, '#0E8C7C');
       ctx.fillStyle = treasGrad;
       ctx.fill();
       ctx.restore();
@@ -997,7 +1318,7 @@ function drawSingleTarget(t) {
         const a = t.pulse + i * Math.PI / 2;
         const sx = t.x + Math.cos(a) * (r + 5);
         const sy = t.y + Math.sin(a) * (r + 5);
-        ctx.fillStyle = '#FFD700';
+        ctx.fillStyle = TARGET_COLORS.SPECIAL;
         ctx.beginPath();
         ctx.arc(sx, sy, 2, 0, Math.PI * 2);
         ctx.fill();
@@ -1006,10 +1327,10 @@ function drawSingleTarget(t) {
       break;
 
     case T_BOMB:
-      // Red pulsing circle
+      // Red pulsing circle (DANGER)
       ctx.save();
       const bombPulse = 0.8 + Math.sin(t.pulse * 4) * 0.2;
-      ctx.shadowColor = COL_RED;
+      ctx.shadowColor = TARGET_COLORS.DANGER;
       ctx.shadowBlur = 10 * bombPulse;
       ctx.beginPath();
       ctx.arc(t.x, t.y, r * bombPulse, 0, Math.PI * 2);
@@ -1033,6 +1354,104 @@ function drawSingleTarget(t) {
       break;
   }
 
+  ctx.restore();
+}
+
+// ── Soul Orbs (orbiting Zhong Kui) ──
+function drawSoulOrbs() {
+  if (soulCount <= 0) return;
+  const cx = W / 2, cy = H * 0.15;
+  const orbitR = Math.min(W * 0.1, 40) + 20;
+  ctx.save();
+  for (let i = 0; i < soulCount; i++) {
+    const angle = soulOrbitAngle + (i / SOUL_MAX) * Math.PI * 2;
+    const sx = cx + Math.cos(angle) * orbitR;
+    const sy = cy + Math.sin(angle) * orbitR * 0.6;
+    const grad = ctx.createRadialGradient(sx, sy, 1, sx, sy, 7);
+    grad.addColorStop(0, 'rgba(200,220,255,0.9)');
+    grad.addColorStop(0.5, 'rgba(150,180,255,0.5)');
+    grad.addColorStop(1, 'rgba(100,140,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 7, 0, Math.PI * 2);
+    ctx.fill();
+    // tiny bright core
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.beginPath();
+    ctx.arc(sx, sy, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ── Ult Button ──
+function drawUltButton() {
+  if (ultUsedThisRound) return;
+  const btnY = H - safeBottom - 55;
+  const btnW = 100, btnH = 40;
+  const btnX = W / 2 - btnW / 2;
+
+  ctx.save();
+  if (ultAvailable) {
+    const pulse = 0.7 + Math.sin(soulOrbitAngle * 3) * 0.3;
+    ctx.shadowColor = '#AA88FF';
+    ctx.shadowBlur = 15 * pulse;
+    drawRoundRect(ctx, btnX, btnY, btnW, btnH, 10);
+    const grad = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY + btnH);
+    grad.addColorStop(0, '#7744CC');
+    grad.addColorStop(1, '#AA88FF');
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillStyle = '#FFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('魂引', W / 2, btnY + btnH / 2);
+  } else {
+    drawRoundRect(ctx, btnX, btnY, btnW, btnH, 10);
+    ctx.fillStyle = 'rgba(60,40,80,0.4)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,100,150,0.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = 'rgba(170,136,255,0.4)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`灵魂 ${soulCount}/${SOUL_MAX}`, W / 2, btnY + btnH / 2);
+  }
+  ctx.restore();
+}
+
+// ── Ult overlay (pull effect) ──
+function drawUltOverlay() {
+  ctx.save();
+  const alpha = 0.15 * (ultTimer / ULT_DURATION);
+  ctx.globalAlpha = alpha;
+  const grad = ctx.createRadialGradient(W / 2, H * 0.55, 10, W / 2, H * 0.55, H * 0.5);
+  grad.addColorStop(0, '#AA88FF');
+  grad.addColorStop(1, 'transparent');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+}
+
+// ── Fire Trails (安琪拉) ──
+function drawFireTrails() {
+  if (fireTrails.length === 0) return;
+  ctx.save();
+  for (const ft of fireTrails) {
+    const alpha = Math.min(1, ft.timer / 1.5) * 0.5;
+    ctx.globalAlpha = alpha;
+    const grad = ctx.createRadialGradient(ft.x, ft.y, 2, ft.x, ft.y, 12);
+    grad.addColorStop(0, 'rgba(255,80,0,0.8)');
+    grad.addColorStop(0.6, 'rgba(255,40,0,0.3)');
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(ft.x, ft.y, 12, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -1078,6 +1497,14 @@ function drawHUD() {
   ctx.fillStyle = COL_LIGHT_GOLD;
   ctx.textAlign = 'center';
   ctx.fillText(`第 ${currentRound} / ${TOTAL_ROUNDS} 关`, W / 2, st + 14);
+
+  // Soul counter - below round
+  if (phase === Phase.PLAYING && !ultUsedThisRound) {
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = soulCount >= SOUL_MAX ? '#AA88FF' : 'rgba(170,136,255,0.6)';
+    const soulIcons = '\u25CF'.repeat(soulCount) + '\u25CB'.repeat(SOUL_MAX - soulCount);
+    ctx.fillText(`\u9B42 ${soulIcons}`, W / 2, st + 30);
+  }
 
   ctx.restore();
 }
@@ -1164,8 +1591,9 @@ function drawTitleScreen() {
   ctx.font = '12px sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,0.35)';
   ctx.textAlign = 'center';
-  ctx.fillText('点击屏幕发射钩子 \u00B7 抓取英雄得分', W / 2, H * 0.88);
-  ctx.fillText('小心炸弹 \u00B7 宝箱加时', W / 2, H * 0.91);
+  ctx.fillText('点击屏幕发射钩子 \u00B7 抓取英雄得分', W / 2, H * 0.86);
+  ctx.fillText('收集灵魂发动魂引 \u00B7 小心炸弹和火焰', W / 2, H * 0.89);
+  ctx.fillText('英雄各有特殊能力 \u00B7 宝箱加时', W / 2, H * 0.92);
 
   ctx.restore();
 }
