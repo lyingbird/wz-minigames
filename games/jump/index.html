@@ -140,10 +140,10 @@ scene.add(dirLight);
 const hemiLight = new THREE.HemisphereLight(0x6688cc, 0x443322, 0.4);
 scene.add(hemiLight);
 
-// Red PointLight for 3rd-hit charge glow (initially off)
-slamGlowLight = new THREE.PointLight(0xFF2200, 0, 6);
-slamGlowLight.position.set(0, 1, 0);
-scene.add(slamGlowLight);
+// Red PointLight for 3rd-hit charge glow — declared later in Game State, assigned here
+var _slamLight = new THREE.PointLight(0xFF2200, 0, 6);
+_slamLight.position.set(0, 1, 0);
+scene.add(_slamLight);
 
 // ═══════════════════════════════════════════════════════════
 // Ground Plane
@@ -181,7 +181,7 @@ let crackTimer = -1; // <0 = inactive
 let crackX = 0, crackY = 0;
 let crackLines = []; // cached crack geometry
 let cameraZoomTimer = -1; // brief zoom effect
-let slamGlowLight = null; // red PointLight for 3rd charge
+let slamGlowLight = _slamLight; // red PointLight for 3rd charge (created during scene setup)
 
 // Platforms
 let platforms = [];
