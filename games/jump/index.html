@@ -140,6 +140,11 @@ scene.add(dirLight);
 const hemiLight = new THREE.HemisphereLight(0x6688cc, 0x443322, 0.4);
 scene.add(hemiLight);
 
+// Red PointLight for 3rd-hit charge glow (initially off)
+slamGlowLight = new THREE.PointLight(0xFF2200, 0, 6);
+slamGlowLight.position.set(0, 1, 0);
+scene.add(slamGlowLight);
+
 // ═══════════════════════════════════════════════════════════
 // Ground Plane
 // ═══════════════════════════════════════════════════════════
@@ -166,6 +171,17 @@ let bestScore = 0;
 let jumpCount = 0;
 let gameOverReady = false;
 let gameOverRank = -1;
+
+// Hit Cycle (Lian Po's 3-hit rhythm: 轻击 → 轻击 → 重锤!)
+let hitCycle = 0; // 0, 1, 2
+let heavySlamActive = false; // true during/after 3rd jump slam
+let shockwaveTimer = -1; // <0 = inactive
+let shockwaveX = 0, shockwaveY = 0; // screen coords for shockwave
+let crackTimer = -1; // <0 = inactive
+let crackX = 0, crackY = 0;
+let crackLines = []; // cached crack geometry
+let cameraZoomTimer = -1; // brief zoom effect
+let slamGlowLight = null; // red PointLight for 3rd charge
 
 // Platforms
 let platforms = [];
@@ -298,6 +314,162 @@ function renderHudFloats() {
     hudCtx.fillText(item.text, dx, dy);
   }
   hudCtx.restore();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Heavy Slam Effects (3rd hit)
+// ═══════════════════════════════════════════════════════════
+function generateCrackLines(sx, sy) {
+  const lines = [];
+  const numLines = 8;
+  for (let i = 0; i < numLines; i++) {
+    const angle = (Math.PI * 2 / numLines) * i + Math.random() * 0.3;
+    const length = 30 + Math.random() * 50;
+    const midX = sx + Math.cos(angle) * length * 0.5 + (Math.random() - 0.5) * 10;
+    const midY = sy + Math.sin(angle) * length * 0.5 + (Math.random() - 0.5) * 10;
+    const endX = sx + Math.cos(angle) * length;
+    const endY = sy + Math.sin(angle) * length;
+    lines.push({ sx, sy, midX, midY, endX, endY });
+  }
+  return lines;
+}
+
+function renderGroundCrack(c, s) {
+  if (crackTimer < 0) return;
+  const alpha = Math.max(0, 1 - crackTimer * 2); // fade over 0.5s
+  if (alpha <= 0) return;
+  c.save();
+  c.globalAlpha = alpha;
+  for (const line of crackLines) {
+    c.beginPath();
+    c.moveTo(line.sx / s, line.sy / s);
+    c.lineTo(line.midX / s, line.midY / s);
+    c.lineTo(line.endX / s, line.endY / s);
+    c.strokeStyle = 'rgba(255, 100, 50, 0.8)';
+    c.lineWidth = 2;
+    c.stroke();
+  }
+  c.restore();
+}
+
+function renderShockwave(c, s) {
+  if (shockwaveTimer < 0) return;
+  const radius = shockwaveTimer * 200;
+  const alpha = Math.max(0, 1 - shockwaveTimer * 2);
+  if (alpha <= 0) return;
+  c.save();
+  c.beginPath();
+  c.arc(shockwaveX / s, shockwaveY / s, radius / s, 0, Math.PI * 2);
+  c.strokeStyle = `rgba(255, 68, 0, ${alpha})`;
+  c.lineWidth = 3;
+  c.stroke();
+  // Inner ring
+  const innerAlpha = Math.max(0, alpha - 0.2);
+  c.beginPath();
+  c.arc(shockwaveX / s, shockwaveY / s, radius * 0.6 / s, 0, Math.PI * 2);
+  c.strokeStyle = `rgba(255, 200, 50, ${innerAlpha})`;
+  c.lineWidth = 2;
+  c.stroke();
+  c.restore();
+}
+
+function renderHitCycleHUD(c) {
+  const W = DESIGN_WIDTH;
+  const st = getSafeTop();
+  const cy = st + 60; // below score
+  const spacing = 22;
+  const baseR = 7;
+
+  c.save();
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+
+  for (let i = 0; i < 3; i++) {
+    const cx = W / 2 + (i - 1) * spacing;
+    const filled = i < hitCycle;
+    const isThird = (i === 2);
+    const isReady = (hitCycle === 2 && isThird);
+
+    let r = baseR;
+    // Pulse the 3rd circle when ready
+    if (isReady) {
+      r = baseR + Math.sin(_animTime * 8) * 3;
+    }
+
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+
+    if (filled) {
+      c.fillStyle = isThird ? '#FF3300' : COLORS.GOLD;
+      c.fill();
+    } else if (isReady) {
+      // Pulsing red fill
+      const pulse = 0.5 + Math.sin(_animTime * 8) * 0.3;
+      c.fillStyle = `rgba(255, 51, 0, ${pulse})`;
+      c.fill();
+      c.strokeStyle = '#FF3300';
+      c.lineWidth = 2;
+      c.stroke();
+      // Outer glow
+      c.beginPath();
+      c.arc(cx, cy, r + 4, 0, Math.PI * 2);
+      c.strokeStyle = `rgba(255, 51, 0, ${pulse * 0.5})`;
+      c.lineWidth = 1.5;
+      c.stroke();
+    } else {
+      c.strokeStyle = 'rgba(255,255,255,0.3)';
+      c.lineWidth = 1.5;
+      c.stroke();
+    }
+  }
+
+  // Label when 3rd hit ready
+  if (hitCycle === 2) {
+    const pulse = 0.6 + Math.sin(_animTime * 6) * 0.4;
+    c.font = 'bold 11px sans-serif';
+    c.fillStyle = `rgba(255, 68, 0, ${pulse})`;
+    c.fillText('重锤!', W / 2, cy + 16);
+  }
+
+  c.restore();
+}
+
+function triggerHeavySlam(screenPos) {
+  heavySlamActive = true;
+  // Shockwave
+  shockwaveTimer = 0;
+  shockwaveX = screenPos.x;
+  shockwaveY = screenPos.y;
+  // Ground crack
+  crackTimer = 0;
+  crackX = screenPos.x;
+  crackY = screenPos.y;
+  crackLines = generateCrackLines(screenPos.x, screenPos.y);
+  // Camera zoom
+  cameraZoomTimer = 0;
+  // Massive dust burst (3x normal)
+  emitHudParticles(screenPos.x, screenPos.y, {
+    count: 35, speed: 180, life: 1.2, color: '#FF6633', size: 5, gravity: 120
+  });
+  emitHudParticles(screenPos.x, screenPos.y, {
+    count: 20, speed: 100, life: 0.8, color: '#FFaa33', size: 3, gravity: 80
+  });
+  emitHudParticles(screenPos.x, screenPos.y + 5, {
+    count: 15, speed: 60, life: 0.6, color: '#fff', size: 3, gravity: 60
+  });
+  // Floating text
+  addHudFloat(screenPos.x, screenPos.y - 60, '天崩地裂!', {
+    color: '#FFD700', size: 32, duration: 1.5, rise: 70
+  });
+  // Wobble ALL nearby platform meshes
+  for (let i = 0; i < platformMeshes.length; i++) {
+    platformMeshes[i].userData.landBounce = 0.4;
+  }
+  // Explosion sound
+  if (audio) {
+    if (audio.playExplosion) audio.playExplosion();
+    else audio.playDeath(); // fallback
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -767,7 +939,27 @@ function updateCamera(dt) {
   );
   currentTarget.lerp(cameraTarget, Math.min(1, 8 * dt));
 
-  camera.position.set(currentTarget.x + 10, 10, currentTarget.z + 10);
+  // Camera zoom effect for heavy slam
+  let zoomOffset = 0;
+  if (cameraZoomTimer >= 0 && cameraZoomTimer < 0.3) {
+    // Quick zoom in then back out
+    const t = cameraZoomTimer / 0.3;
+    zoomOffset = Math.sin(t * Math.PI) * -1.5; // zoom in by reducing distance
+  }
+
+  // Screen shake for heavy slam
+  let shakeX = 0, shakeY = 0;
+  if (cameraZoomTimer >= 0 && cameraZoomTimer < 0.3) {
+    const intensity = Math.max(0, 1 - cameraZoomTimer / 0.3) * 0.15;
+    shakeX = (Math.random() - 0.5) * intensity;
+    shakeY = (Math.random() - 0.5) * intensity;
+  }
+
+  camera.position.set(
+    currentTarget.x + 10 + zoomOffset + shakeX,
+    10 + shakeY,
+    currentTarget.z + 10 + zoomOffset
+  );
   camera.lookAt(currentTarget);
 
   // Update directional light to follow
@@ -832,9 +1024,13 @@ function handleLanding(result) {
     falling = true;
     fallT = 0;
     fallStartY = lpY;
+    hitCycle = 0; // Reset cycle on miss
     if (audio) audio.playDeath();
     return;
   }
+
+  // Check if this is the heavy slam (3rd hit)
+  const isHeavySlam = heavySlamActive;
 
   // Landed!
   currentPlatIdx++;
@@ -842,9 +1038,9 @@ function handleLanding(result) {
   nextPlat.landed = true;
   lpY = nextPlat.h;
 
-  // Landing squish
-  lpScaleY = 0.65;
-  _landSquishTimer = 0.25;
+  // Landing squish (heavier on slam)
+  lpScaleY = isHeavySlam ? 0.45 : 0.65;
+  _landSquishTimer = isHeavySlam ? 0.4 : 0.25;
 
   // Score
   let points = 1;
@@ -858,48 +1054,75 @@ function handleLanding(result) {
     combo = 0;
   }
   if (nextPlat.type === 'crystal') points += 5;
+
+  // Apply x3 multiplier for heavy slam!
+  if (isHeavySlam) {
+    points *= 3;
+  }
   score += points;
 
   // Screen-space effects
   const screenPos = worldToScreen(nextPlat.wx, nextPlat.h + 0.5, nextPlat.wz);
 
+  // Heavy slam effects (3rd hit)
+  if (isHeavySlam) {
+    triggerHeavySlam(screenPos);
+    // Screen shake is handled via cameraZoomTimer in update
+  }
+
   if (isPerfect) {
     emitHudParticles(screenPos.x, screenPos.y, {
-      count: 25, speed: 140, life: 0.9, color: COLORS.GOLD, size: 4, gravity: 100
+      count: isHeavySlam ? 45 : 25, speed: isHeavySlam ? 200 : 140, life: isHeavySlam ? 1.2 : 0.9, color: COLORS.GOLD, size: isHeavySlam ? 5 : 4, gravity: 100
     });
     emitHudParticles(screenPos.x, screenPos.y - 5, {
-      count: 8, speed: 60, life: 0.4, color: '#fff', size: 3, gravity: 50
+      count: isHeavySlam ? 15 : 8, speed: 60, life: 0.4, color: '#fff', size: 3, gravity: 50
     });
-    addHudFloat(screenPos.x, screenPos.y - 40, `PERFECT +${points}`, {
-      color: COLORS.GOLD, size: 22, duration: 1.2
-    });
+    if (!isHeavySlam) {
+      addHudFloat(screenPos.x, screenPos.y - 40, `PERFECT +${points}`, {
+        color: COLORS.GOLD, size: 22, duration: 1.2
+      });
+    } else {
+      addHudFloat(screenPos.x, screenPos.y - 30, `PERFECT x3 +${points}`, {
+        color: '#FF4400', size: 26, duration: 1.4
+      });
+    }
     if (audio) {
       audio.playScore();
       if (combo >= 2) audio.playCombo(Math.min(combo, 8));
     }
   } else if (result === 'edge') {
     emitHudParticles(screenPos.x, screenPos.y, {
-      count: 4, speed: 40, life: 0.35, color: '#999', size: 2.5, gravity: 70
+      count: isHeavySlam ? 12 : 4, speed: isHeavySlam ? 80 : 40, life: 0.35, color: isHeavySlam ? '#FF8844' : '#999', size: 2.5, gravity: 70
     });
-    addHudFloat(screenPos.x, screenPos.y - 30, `+${points}`, {
-      color: '#ccc', size: 16, duration: 0.8
-    });
+    if (!isHeavySlam) {
+      addHudFloat(screenPos.x, screenPos.y - 30, `+${points}`, {
+        color: '#ccc', size: 16, duration: 0.8
+      });
+    }
     if (audio) audio.playHit();
   } else {
     emitHudParticles(screenPos.x, screenPos.y, {
-      count: 8, speed: 90, life: 0.5, color: '#B0C4DE', size: 3, gravity: 90
+      count: isHeavySlam ? 20 : 8, speed: isHeavySlam ? 140 : 90, life: 0.5, color: isHeavySlam ? '#FF6644' : '#B0C4DE', size: 3, gravity: 90
     });
-    addHudFloat(screenPos.x, screenPos.y - 35, `+${points}`, {
-      color: '#fff', size: 18, duration: 1
-    });
+    if (!isHeavySlam) {
+      addHudFloat(screenPos.x, screenPos.y - 35, `+${points}`, {
+        color: '#fff', size: 18, duration: 1
+      });
+    }
     if (audio) audio.playHit();
   }
 
-  // Platform wobble (bounce via mesh scale)
+  // Platform wobble (bounce via mesh scale) - bigger for slam
   const meshIdx = currentPlatIdx;
   if (platformMeshes[meshIdx]) {
-    platformMeshes[meshIdx].userData.landBounce = 0.3;
+    platformMeshes[meshIdx].userData.landBounce = isHeavySlam ? 0.6 : 0.3;
   }
+
+  // Advance hit cycle
+  hitCycle = (hitCycle + 1) % 3;
+
+  // Turn off slam glow light
+  if (slamGlowLight) slamGlowLight.intensity = 0;
 
   // Center camera
   centerCameraOnPlatform(nextPlat);
@@ -950,11 +1173,14 @@ function executeJump() {
   jumpStartZ = lpZ;
   jumpTargetX = lpX + Math.cos(dirAngle) * distance;
   jumpTargetZ = lpZ + Math.sin(dirAngle) * distance;
-  jumpArcHeight = distance * ARC_HEIGHT_FACTOR;
+  // 3rd hit: 1.3x arc height
+  const arcMult = (hitCycle === 2) ? 1.3 : 1.0;
+  jumpArcHeight = distance * ARC_HEIGHT_FACTOR * arcMult;
 
   jumping = true;
   jumpT = 0;
   state = 'jumping';
+  heavySlamActive = (hitCycle === 2); // Mark if this is the heavy slam jump
   charging = false;
   chargeTime = 0;
   chargePower = 0;
@@ -1084,6 +1310,12 @@ function startGame() {
   lpScaleY = 1;
   hudFloats = [];
   hudParticles = [];
+  hitCycle = 0;
+  heavySlamActive = false;
+  shockwaveTimer = -1;
+  crackTimer = -1;
+  cameraZoomTimer = -1;
+  if (slamGlowLight) slamGlowLight.intensity = 0;
 
   initPlatforms();
   const first = platforms[0];
@@ -1342,11 +1574,11 @@ function drawGameHUD() {
   c.fillStyle = '#fff';
   c.fillText(score, W / 2, st);
 
-  // Combo
+  // Combo (shifted down to make room for hit cycle indicator)
   if (combo >= 2) {
     c.font = 'bold 18px sans-serif';
     c.fillStyle = COLORS.GOLD;
-    c.fillText(`${combo}x COMBO`, W / 2, st + 54);
+    c.fillText(`${combo}x COMBO`, W / 2, st + 88);
   }
 
   // Back button
@@ -1389,9 +1621,12 @@ function drawPowerMeter(c) {
   c.lineWidth = lineW;
   c.stroke();
 
-  // Color arc
+  // Color arc (all red on 3rd hit charge)
   let arcColor;
-  if (fill < 0.35) arcColor = '#4CAF50';
+  if (hitCycle === 2) {
+    const pulse = 0.7 + Math.sin(_animTime * 10) * 0.3;
+    arcColor = `rgba(255, 34, 0, ${pulse})`;
+  } else if (fill < 0.35) arcColor = '#4CAF50';
   else if (fill < 0.6) arcColor = '#F1C40F';
   else if (fill < 0.85) arcColor = '#E67E22';
   else arcColor = '#E74C3C';
@@ -1466,6 +1701,51 @@ function update(dt) {
       const compressAmt = 0.15 * (chargePower / MAX_CHARGE);
       platformMeshes[currentPlatIdx].scale.y = 1 - compressAmt;
     }
+
+    // 3rd hit charge: RED GLOW effects
+    if (hitCycle === 2) {
+      const glowIntensity = 1.5 + Math.sin(_animTime * 10) * 0.8;
+      if (slamGlowLight) {
+        slamGlowLight.position.set(lpX, lpY + 0.5, lpZ);
+        slamGlowLight.intensity = glowIntensity * (chargePower / MAX_CHARGE);
+      }
+      // Tint character materials toward red (via emissive)
+      const redAmt = 0.3 * (chargePower / MAX_CHARGE);
+      gemMat.emissiveIntensity = 0.7 + redAmt * 2;
+      armorRedMat.emissiveIntensity = redAmt * 1.5;
+      armorRedMat.emissive = armorRedMat.emissive || new THREE.Color();
+      armorRedMat.emissive.setHex(0xFF2200);
+      armorMat.emissiveIntensity = redAmt;
+      armorMat.emissive = armorMat.emissive || new THREE.Color();
+      armorMat.emissive.setHex(0xFF1100);
+      // Emit red charging particles on HUD
+      if (Math.random() < 0.3) {
+        const charScreen = worldToScreen(lpX, lpY + 0.3, lpZ);
+        emitHudParticles(charScreen.x, charScreen.y, {
+          count: 1, speed: 30, life: 0.3, color: '#FF3300', size: 3, gravity: -50
+        });
+      }
+    }
+  } else {
+    // Reset emissive when not charging 3rd hit
+    if (slamGlowLight) slamGlowLight.intensity = 0;
+    gemMat.emissiveIntensity = 0.7;
+    armorRedMat.emissiveIntensity = 0;
+    armorMat.emissiveIntensity = 0;
+  }
+
+  // Update slam effect timers
+  if (shockwaveTimer >= 0) {
+    shockwaveTimer += dt;
+    if (shockwaveTimer > 0.5) shockwaveTimer = -1;
+  }
+  if (crackTimer >= 0) {
+    crackTimer += dt;
+    if (crackTimer > 0.5) crackTimer = -1;
+  }
+  if (cameraZoomTimer >= 0) {
+    cameraZoomTimer += dt;
+    if (cameraZoomTimer > 0.3) cameraZoomTimer = -1;
   }
 
   // Jump animation
@@ -1487,8 +1767,9 @@ function update(dt) {
       const arcT = jumpT;
       lpY = jumpStartY + jumpArcHeight * 4 * arcT * (1 - arcT);
 
-      // Somersault
-      lpRotation = jumpT * Math.PI * 2;
+      // Somersault (full double flip on 3rd hit)
+      const flipCount = heavySlamActive ? 2 : 1;
+      lpRotation = jumpT * Math.PI * 2 * flipCount;
 
       // Stretch
       lpScaleY = 1 + 0.2 * Math.sin(jumpT * Math.PI);
@@ -1615,6 +1896,9 @@ function render() {
     drawGameOverHUD();
   } else {
     drawGameHUD();
+    renderHitCycleHUD(hudCtx);
+    renderGroundCrack(hudCtx, getHudScale());
+    renderShockwave(hudCtx, getHudScale());
     renderHudParticles();
     renderHudFloats();
   }
